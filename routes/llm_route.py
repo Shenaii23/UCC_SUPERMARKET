@@ -196,7 +196,16 @@ async def detect_intent(query: IntentQuery):
     user_message = query.message.lower()
     user_id      = query.user_id or "default"
 
-    # Save user previous message, is in a csv file for now
+
+    MAX_WORDS = 100
+    word_count = len(user_message.split(" "))
+    
+    if word_count > MAX_WORDS:
+        return StreamingResponse(
+            stream_greeting_message(f"Your message is too long! Please keep it under {MAX_WORDS} words. You sent {word_count} words."),
+            media_type="text/event-stream"
+        )   
+     # Save user previous message, is in a csv file for now
     if user_message:
         import os
         import csv
