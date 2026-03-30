@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}UCC Supermarket{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        
+        body {
+            background: #f8f9fa;
+            min-height: 100vh;
+        }
+        
+        /* Navbar */
+        .navbar {
+            background: #2c3e50;
+            padding: 1rem 2rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        
+        .logo span {
+            color: #e67e22;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+        
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        
+        .nav-links a:hover {
+            color: #e67e22;
+        }
+        
+        .cart-icon {
+            position: relative;
+            font-size: 1.3rem;
+            cursor: pointer;
+        }
+        
+        .cart-count {
+            position: absolute;
+            top: -8px;
+            right: -12px;
+            background: #e74c3c;
+            color: white;
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 50%;
+            min-width: 20px;
+            text-align: center;
+        }
+        
+        /* Main content area */
+        .main-content {
+            min-height: calc(100vh - 70px);
+            padding-bottom: 2rem;
+        }
+        
+        /* Chatbot Widget - PERSISTENT */
+        .chatbot-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        
+        .chatbot-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #e67e22;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(230,126,34,0.4);
+            animation: shake 3s infinite;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            transition: transform 0.2s;
+        }
+        
+        .chatbot-button i {
+            font-size: 2rem;
+            color: white;
+        }
+        
+        .chatbot-button:hover {
+            transform: scale(1.1);
+            animation: none;
+        }
+        
+        .tooltip {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            background: #2c3e50;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            white-space: nowrap;
+            opacity: 0;
+            transition: 0.3s;
+            pointer-events: none;
+        }
+        
+        .chatbot-button:hover .tooltip {
+            opacity: 1;
+            top: -50px;
+        }
+        
+        .chatbot-container {
+            position: absolute;
+            bottom: 80px;
+            right: 0;
+            width: 350px;
+            height: 500px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .chatbot-container.hidden {
+            opacity: 0;
+            transform: scale(0.8);
+            pointer-events: none;
+            visibility: hidden;
+        }
+        
+        .chatbot-header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .chatbot-header h3 {
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .close-chat {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: opacity 0.2s;
+        }
+        
+        .close-chat:hover {
+            opacity: 0.8;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            background: #f9f9f9;
+        }
+        
+        .message {
+            max-width: 85%;
+            padding: 8px 12px;
+            border-radius: 12px;
+            animation: fadeIn 0.3s ease;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+        
+        .message.user {
+            align-self: flex-end;
+            background: #e67e22;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message.bot {
+            align-self: flex-start;
+            background: white;
+            color: #333;
+            border: 1px solid #e0e0e0;
+            border-bottom-left-radius: 4px;
+        }
+        
+        /* Typing indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 8px 12px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            width: fit-content;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #999;
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite ease-in-out;
+        }
+        
+        .typing-dot:nth-child(1) { animation-delay: 0s; }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        
+        @keyframes typingBounce {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-8px);
+            }
+        }
+        
+        .suggested-questions {
+            padding: 0.75rem 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            border-top: 1px solid #e0e0e0;
+            background: white;
+        }
+        
+        .suggested-question {
+            background: #f0f0f0;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #666;
+        }
+        
+        .suggested-question:hover {
+            background: #e67e22;
+            color: white;
+            transform: translateY(-1px);
+        }
+        
+        .chat-input-container {
+            padding: 1rem;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            background: white;
+        }
+        
+        .chat-input-container input {
+            flex: 1;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 0.9rem;
+            transition: border-color 0.2s;
+        }
+        
+        .chat-input-container input:focus {
+            border-color: #e67e22;
+        }
+        
+        .chat-input-container button {
+            background: #e67e22;
+            color: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .chat-input-container button:hover {
+            background: #d35400;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: rotate(0); }
+            2% { transform: rotate(5deg); }
+            4% { transform: rotate(-5deg); }
+            6% { transform: rotate(3deg); }
+            8% { transform: rotate(-3deg); }
+            10% { transform: rotate(0); }
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Toast notification */
+        .toast-notification {
+            position: fixed;
+            bottom: 100px;
+            right: 100px;
+            background: #27ae60;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            z-index: 2000;
+            animation: slideInRight 0.3s ease;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        /* Scrollbar */
+        .chat-messages::-webkit-scrollbar {
+            width: 5px;
+        }
+        
+        .chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 5px;
+        }
+        
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #e67e22;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="logo">
+            <a href="/" style="text-decoration: none;">UCC <span>Supermarket</span></a>
+        </div>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/products">Products</a>
+            <a href="/cart">Cart</a>
+        </div>
+        <div class="cart-icon" onclick="window.location.href='/cart'">
+            <i class="fas fa-shopping-cart"></i>
+            <span class="cart-count" id="cartCount">0</span>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Persistent Chatbot Widget -->
+    <div class="chatbot-widget">
+        <button class="chatbot-button" onclick="toggleChat()">
+            <i class="fas fa-robot"></i>
+            <span class="tooltip">Need help? Ask me!</span>
+        </button>
+        <div class="chatbot-container hidden" id="chatContainer">
+            <div class="chatbot-header">
+                <h3><i class="fas fa-robot"></i> UCC Assistant</h3>
+                <button class="close-chat" onclick="toggleChat()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot">Hi! I'm your shopping assistant. What can I help you with?</div>
+            </div>
+            <div class="suggested-questions">
+                <span class="suggested-question" onclick="quickQuestion('Show me products')">Show products</span>
+                <span class="suggested-question" onclick="quickQuestion('Add apples to cart')">Add apples</span>
+                <span class="suggested-question" onclick="quickQuestion('What recipes do you have?')">Recipes</span>
+                <span class="suggested-question" onclick="quickQuestion('Show my cart')">My cart</span>
+            </div>
+            <div class="chat-input-container">
+                <input type="text" id="chatInput" placeholder="Type message..." onkeypress="if(event.key==='Enter') sendMessage()">
+                <button onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize userId ONCE at page load and use consistently
+        let userId = null;
+        let cart = [];
+        let isStreaming = false;
+        
+        // Initialize userId from localStorage or generate one
+        function initializeUserId() {
+            // Check if we have a stored user_id
+            userId = localStorage.getItem('user_id');
+            
+            if (!userId) {
+                // Generate a consistent userId for this session
+                userId = 'testuser';  // You can also use: 'user_' + Math.random().toString(36).substr(2, 9)
+                localStorage.setItem('user_id', userId);
+            }
+            
+            console.log('[INIT] userId set to:', userId);
+            return userId;
+        }
+        
+        // Load cart from localStorage
+        function loadCart() {
+            try {
+                const stored = localStorage.getItem('ucc_cart');
+                if (stored) {
+                    cart = JSON.parse(stored);
+                } else {
+                    cart = [];
+                }
+                updateCartCount();
+            } catch(e) {
+                console.error('[CART] Error loading from localStorage:', e);
+                cart = [];
+            }
+        }
+        
+        // Save cart to localStorage
+        function saveCart() {
+            localStorage.setItem('ucc_cart', JSON.stringify(cart));
+            updateCartCount();
+        }
+        
+        // Update cart count in navbar
+        function updateCartCount() {
+            const count = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
+            const cartCountElement = document.getElementById('cartCount');
+            if (cartCountElement) {
+                cartCountElement.textContent = count;
+            }
+        }
+        
+        // Sync cart with backend using CONSISTENT userId
+        async function syncCartWithBackend() {
+            try {
+                console.log('[SYNC] Syncing cart for user:', userId);
+                
+                const response = await fetch('/get_cart', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ user_id: userId })
+                });
+                
+                const data = await response.json();
+                console.log('[SYNC] Backend response:', data);
+                
+                if (data.success && data.cart) {
+                    cart = data.cart;
+                    console.log('[SYNC] Loaded', cart.length, 'items from backend');
+                    saveCart();
+                } else {
+                    console.warn('[SYNC] No cart data from backend');
+                }
+            } catch(e) {
+                console.error('[SYNC] Error syncing cart:', e);
+                console.log('[SYNC] Using local cart fallback');
+            }
+        }
+        
+        // Toggle chat window
+        function toggleChat() {
+            const container = document.getElementById('chatContainer');
+            container.classList.toggle('hidden');
+        }
+        
+        // Add message to chat
+        function addMessage(text, isUser = false) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            messageDiv.textContent = text;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            return messageDiv;
+        }
+        
+        // Show typing indicator
+        let typingIndicator = null;
+        function showTyping() {
+            removeTyping();
+            const messagesDiv = document.getElementById('chatMessages');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'typing-indicator';
+            typingDiv.id = 'typingIndicator';
+            typingDiv.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+            messagesDiv.appendChild(typingDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            typingIndicator = typingDiv;
+        }
+        
+        function removeTyping() {
+            if (typingIndicator && typingIndicator.parentNode) {
+                typingIndicator.remove();
+                typingIndicator = null;
+            }
+        }
+        
+        // Quick question
+        function quickQuestion(question) {
+            document.getElementById('chatInput').value = question;
+            sendMessage();
+        }
+        
+        // Send message with streaming
+        async function sendMessage() {
+            if (isStreaming) {
+                addMessage("Please wait for the previous response to finish...", false);
+                return;
+            }
+            
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage(message, true);
+            input.value = '';
+            
+            // Create bot message container for streaming
+            const botMessageDiv = addMessage('', false);
+            botMessageDiv.textContent = '';
+            
+            showTyping();
+            isStreaming = true;
+            
+            try {
+                console.log('[CHAT] Sending message as user:', userId);
+                
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        message: message,
+                        user_id: userId,  // Use the consistent userId
+                        cart: cart
+                    })
+                });
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+                let hasReceivedWord = false;
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const jsonData = JSON.parse(line.slice(6));
+                                
+                                // Remove typing indicator when first word arrives
+                                if (!hasReceivedWord && jsonData.word) {
+                                    removeTyping();
+                                    hasReceivedWord = true;
+                                }
+                                
+                                // Handle word streaming
+                                if (jsonData.word) {
+                                    fullText += jsonData.word;
+                                    botMessageDiv.textContent = fullText;
+                                    const messagesDiv = document.getElementById('chatMessages');
+                                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                                }
+                                
+                                // Handle done signal
+                                if (jsonData.done === true) {
+                                    break;
+                                }
+                                
+                                // Handle clear signal (for holding messages)
+                                if (jsonData.clear === true) {
+                                    fullText = '';
+                                    botMessageDiv.textContent = '';
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data:', e);
+                            }
+                        }
+                    }
+                }
+                
+                // Ensure typing indicator is removed
+                removeTyping();
+                
+                // If no words were received, show a fallback message
+                if (!hasReceivedWord && botMessageDiv.textContent === '') {
+                    botMessageDiv.textContent = "I'm here to help! What would you like to know?";
+                }
+                
+                // Refresh cart after chat (LLM might have added items)
+                await syncCartWithBackend();
+                
+            } catch (error) {
+                console.error('Error sending message:', error);
+                removeTyping();
+                botMessageDiv.textContent = "Sorry, I'm having trouble connecting. Please try again.";
+            } finally {
+                isStreaming = false;
+
+                // Handle cart redirect after LLM finishes streaming
+                if (fullText.toLowerCase().includes("I'm thinking...Redirecting you to your cart now.")) {
+                    setTimeout(() => {
+                        window.location.href = "/cart";
+                    }, 500);
+                }
+            }
+        }
+        
+        // Show toast notification
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = 'toast-notification';
+            toast.textContent = message;
+            toast.style.background = type === 'success' ? '#27ae60' : '#e74c3c';
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log('[INIT] Page loaded, initializing...');
+            
+            // Initialize userId first
+            initializeUserId();
+            
+            // Then load and sync cart
+            loadCart();
+            await syncCartWithBackend();
+            
+            console.log('[INIT] Complete. userId:', userId, 'Cart items:', cart.length);
+        });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

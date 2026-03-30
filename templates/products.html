@@ -1,0 +1,135 @@
+{% extends "main.html" %}
+
+{% block title %}Products - UCC Supermarket{% endblock %}
+
+{% block content %}
+<style>
+    .products-header {
+        max-width: 1200px;
+        margin: 2rem auto 0;
+        padding: 0 2rem;
+    }
+    
+    .products-header h1 {
+        color: #2c3e50;
+        margin-bottom: 2rem;
+    }
+    
+    .products-grid {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 2rem 2rem;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 2rem;
+    }
+    
+    .product-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        transition: all 0.2s;
+    }
+    
+    .product-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+    }
+    
+    .product-card h3 {
+        color: #2c3e50;
+        margin-bottom: 0.5rem;
+        font-size: 1.2rem;
+    }
+    
+    .product-category {
+        color: #666;
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+    }
+    
+    .product-price {
+        font-size: 1.5rem;
+        color: #e67e22;
+        font-weight: bold;
+        margin: 1rem 0;
+    }
+    
+    .sale-unit {
+        color: #e74c3c;
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+        font-weight: 500;
+    }
+    
+    .add-to-cart-btn {
+        width: 100%;
+        padding: 10px;
+        background: #2c3e50;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: background 0.2s;
+        font-size: 0.9rem;
+    }
+    
+    .add-to-cart-btn:hover {
+        background: #e67e22;
+    }
+</style>
+
+<div class="products-header">
+    <h1>Our Products</h1>
+</div>
+
+<div class="products-grid">
+    {% for product in products %}
+    <div class="product-card">
+        <h3>{{ product.product_name }}</h3>
+        <div class="product-category">{{ product.category }}</div>
+        <div class="product-price">${{ "%.2f"|format(product.price) }}</div>
+        <div class="sale-unit">{{ product.sale_unit }}</div>
+        <button class="add-to-cart-btn" onclick="addToCart('{{ product.product_code }}', '{{ product.product_name }}', {{ product.price }})">
+            <i class="fas fa-cart-plus"></i> Add to Cart
+        </button>
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+    async function addToCart(productCode, productName, price) {
+        try {
+            const response = await fetch('/add_to_cart', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    user_id: userId,
+                    items: [{
+                        product_code: productCode,
+                        product_name: productName,
+                        price: price,
+                        quantity: 1
+                    }]
+                })
+            });
+            
+            const data = await response.json();
+            if (data.cart) {
+                cart = data.cart;
+                saveCart();
+                showToast(`Added ${productName} to cart!`);
+            }
+        } catch(e) {
+            console.error('Error adding to cart:', e);
+            showToast('Error adding to cart', 'error');
+        }
+    }
+</script>
+{% endblock %}
