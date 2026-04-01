@@ -12,7 +12,9 @@ from typing import Dict, List, Optional
 DOCUMENTS = {
     "terms_and_conditions": "documents/UCC_Terms_Full.pdf",
     "privacy_policy": "documents/UCC_Privacy_Full.pdf",
-    "llm_guidelines": "documents/UCC_LLM_Full.pdf"
+    "llm_guidelines": "documents/UCC_LLM_Full.pdf",
+    "store_info": "documents/UCC_Store_Info.pdf",
+    "general_chat": "documents/General_Chat_Guide.pdf"
 }
 
 # Cache file to store document content and hashes
@@ -170,7 +172,9 @@ class DocumentManager:
         keyword_mapping = {
             "terms_and_conditions": ["terms", "conditions", "policy", "service", "agreement"],
             "privacy_policy": ["privacy", "data", "personal", "information", "collect"],
-            "llm_guidelines": ["ai", "llm", "algorithm", "automated", "decision"]
+            "llm_guidelines": ["ai", "llm", "algorithm", "automated", "decision"],
+            "store_info": ["store", "hours", "location", "address", "phone", "departments"],
+            "general_chat": ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "good night"]
         }
         
         # Find relevant documents

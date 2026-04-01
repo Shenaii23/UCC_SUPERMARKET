@@ -36,6 +36,7 @@ def extract_product_names_from_response(message_text: str, parsed: dict) -> list
     return products
 
 
+
 def save_products(user_id: str, products: list):
     """
     Save product list to session.
@@ -52,7 +53,6 @@ def save_products(user_id: str, products: list):
             })
     
     product_sessions[user_id] = cleaned
-
 
 
 def get_products(user_id: str) -> list:

@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}UCC Supermarket{% endblock %}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
         }
         
         body {
@@ -81,7 +82,7 @@
             padding-bottom: 2rem;
         }
         
-        /* Chatbot Widget - PERSISTENT */
+        /* Chatbot Widget */
         .chatbot-widget {
             position: fixed;
             bottom: 20px;
@@ -139,8 +140,8 @@
             position: absolute;
             bottom: 80px;
             right: 0;
-            width: 350px;
-            height: 500px;
+            width: 380px;
+            height: 550px;
             background: white;
             border-radius: 15px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
@@ -148,6 +149,21 @@
             flex-direction: column;
             transition: all 0.3s ease;
             overflow: hidden;
+        }
+        
+        /* Fullscreen mode */
+        .chatbot-container.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw;
+            height: 100vh;
+            border-radius: 0;
+            bottom: 0;
+            right: 0;
+            z-index: 10000;
         }
         
         .chatbot-container.hidden {
@@ -173,16 +189,23 @@
             gap: 8px;
         }
         
-        .close-chat {
+        .header-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .fullscreen-btn, .close-chat {
             background: none;
             border: none;
             color: white;
             cursor: pointer;
             font-size: 1.2rem;
             transition: opacity 0.2s;
+            padding: 5px;
         }
         
-        .close-chat:hover {
+        .fullscreen-btn:hover, .close-chat:hover {
             opacity: 0.8;
         }
         
@@ -194,6 +217,27 @@
             flex-direction: column;
             gap: 0.75rem;
             background: #f9f9f9;
+        }
+        
+        /* Larger messages in fullscreen */
+        .fullscreen .chat-messages {
+            padding: 2rem;
+        }
+        
+        .fullscreen .message {
+            max-width: 70%;
+            font-size: 1.1rem;
+            padding: 12px 16px;
+        }
+        
+        .fullscreen .chat-input-container input {
+            font-size: 1rem;
+            padding: 12px 20px;
+        }
+        
+        .fullscreen .suggested-question {
+            font-size: 0.9rem;
+            padding: 8px 16px;
         }
         
         .message {
@@ -218,6 +262,61 @@
             color: #333;
             border: 1px solid #e0e0e0;
             border-bottom-left-radius: 4px;
+        }
+
+        /* Markdown styling for bot messages */
+        .message.bot p {
+            margin-bottom: 0.5rem;
+            line-height: 1.5;
+        }
+        .message.bot p:last-child {
+            margin-bottom: 0;
+        }
+        .message.bot ul, .message.bot ol {
+            margin-left: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .message.bot li {
+            margin-bottom: 0.25rem;
+        }
+        .message.bot strong {
+            color: #1a252f;
+            font-weight: 600;
+        }
+        .message.bot code {
+            background: #f0f4f8;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: inherit;
+            color: #e67e22;
+            font-size: 0.9em;
+        }
+        .message.bot pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 10px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+        }
+        .message.bot pre code {
+            background: transparent;
+            color: inherit;
+            padding: 0;
+        }
+        
+        /* Image preview in chat */
+        .message img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin-top: 5px;
+        }
+        
+        .image-preview {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 8px;
+            margin-top: 5px;
         }
         
         /* Typing indicator */
@@ -284,6 +383,7 @@
             display: flex;
             gap: 10px;
             background: white;
+            align-items: center;
         }
         
         .chat-input-container input {
@@ -300,7 +400,26 @@
             border-color: #e67e22;
         }
         
-        .chat-input-container button {
+        .attach-btn {
+            background: #95a5a6;
+            color: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .attach-btn:hover {
+            background: #7f8c8d;
+            transform: scale(1.05);
+        }
+        
+        .send-btn {
             background: #e67e22;
             color: white;
             border: none;
@@ -308,11 +427,25 @@
             height: 40px;
             border-radius: 50%;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         
-        .chat-input-container button:hover {
+        .send-btn:hover {
             background: #d35400;
+            transform: scale(1.05);
+        }
+        
+        .send-btn:disabled, .attach-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* File input hidden */
+        #fileInput {
+            display: none;
         }
         
         @keyframes shake {
@@ -399,10 +532,17 @@
 
     <!-- Main Content -->
     <div class="main-content">
-        {% block content %}{% endblock %}
+        {% block content %}
+        <!-- Default content -->
+        <div style="text-align: center; padding: 50px 20px;">
+            <h1>Welcome to UCC Supermarket!</h1>
+            <p>Your AI-powered shopping assistant is ready to help.</p>
+            <p>💡 Try uploading a photo of your shopping list or just type what you need!</p>
+        </div>
+        {% endblock %}
     </div>
 
-    <!-- Persistent Chatbot Widget -->
+    <!-- Chatbot Widget -->
     <div class="chatbot-widget">
         <button class="chatbot-button" onclick="toggleChat()">
             <i class="fas fa-robot"></i>
@@ -411,21 +551,39 @@
         <div class="chatbot-container hidden" id="chatContainer">
             <div class="chatbot-header">
                 <h3><i class="fas fa-robot"></i> UCC Assistant</h3>
-                <button class="close-chat" onclick="toggleChat()"><i class="fas fa-times"></i></button>
+                <div class="header-buttons">
+                    <button class="fullscreen-btn" onclick="toggleFullscreen()" id="fullscreenBtn">
+                        <i class="fas fa-expand"></i>
+                    </button>
+                    <button class="close-chat" onclick="toggleChat()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
             </div>
             <div class="chat-messages" id="chatMessages">
-                <div class="message bot">Hi! I'm your shopping assistant. What can I help you with?</div>
+                <div class="message bot">✨ Hi! I'm your shopping assistant. You can:<br>
+                • Type your shopping list<br>
+                • 📎 Attach a photo of a written list<br>
+                • Paste text directly<br><br>
+                Try it out!</div>
             </div>
             <div class="suggested-questions">
-                <span class="suggested-question" onclick="quickQuestion('Show me products')">Show products</span>
-                <span class="suggested-question" onclick="quickQuestion('Add apples to cart')">Add apples</span>
-                <span class="suggested-question" onclick="quickQuestion('What recipes do you have?')">Recipes</span>
-                <span class="suggested-question" onclick="quickQuestion('Show my cart')">My cart</span>
+                <span class="suggested-question" onclick="quickQuestion('Show me products')">🛍️ Products</span>
+                <span class="suggested-question" onclick="quickQuestion('Reorder my last shopping list')">➕ Reorder</span>
+                <span class="suggested-question" onclick="quickQuestion('What recipes do you have?')">🍳 Recipes</span>
+                <span class="suggested-question" onclick="quickQuestion('Show my cart')">🛒 My cart</span>
+                <span class="suggested-question" onclick="quickQuestion('Help me plan a meal')">🍽️ Meal planning</span>
             </div>
             <div class="chat-input-container">
-                <input type="text" id="chatInput" placeholder="Type message..." onkeypress="if(event.key==='Enter') sendMessage()">
-                <button onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
+                <input type="text" id="chatInput" placeholder="Type your shopping list or question..." onkeypress="if(event.key==='Enter') sendMessage()">
+                <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Upload shopping list image">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                <button class="send-btn" onclick="sendMessage()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
             </div>
+            <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
         </div>
     </div>
 
@@ -437,15 +595,11 @@
         
         // Initialize userId from localStorage or generate one
         function initializeUserId() {
-            // Check if we have a stored user_id
             userId = localStorage.getItem('user_id');
-            
             if (!userId) {
-                // Generate a consistent userId for this session
-                userId = 'testuser';  // You can also use: 'user_' + Math.random().toString(36).substr(2, 9)
+                userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
                 localStorage.setItem('user_id', userId);
             }
-            
             console.log('[INIT] userId set to:', userId);
             return userId;
         }
@@ -454,14 +608,9 @@
         function loadCart() {
             try {
                 const stored = localStorage.getItem('ucc_cart');
-                if (stored) {
-                    cart = JSON.parse(stored);
-                } else {
-                    cart = [];
-                }
+                cart = stored ? JSON.parse(stored) : [];
                 updateCartCount();
             } catch(e) {
-                console.error('[CART] Error loading from localStorage:', e);
                 cart = [];
             }
         }
@@ -476,35 +625,24 @@
         function updateCartCount() {
             const count = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
             const cartCountElement = document.getElementById('cartCount');
-            if (cartCountElement) {
-                cartCountElement.textContent = count;
-            }
+            if (cartCountElement) cartCountElement.textContent = count;
         }
         
-        // Sync cart with backend using CONSISTENT userId
+        // Sync cart with backend
         async function syncCartWithBackend() {
             try {
-                console.log('[SYNC] Syncing cart for user:', userId);
-                
                 const response = await fetch('/get_cart', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ user_id: userId })
                 });
-                
                 const data = await response.json();
-                console.log('[SYNC] Backend response:', data);
-                
                 if (data.success && data.cart) {
                     cart = data.cart;
-                    console.log('[SYNC] Loaded', cart.length, 'items from backend');
                     saveCart();
-                } else {
-                    console.warn('[SYNC] No cart data from backend');
                 }
             } catch(e) {
-                console.error('[SYNC] Error syncing cart:', e);
-                console.log('[SYNC] Using local cart fallback');
+                console.error('Sync error:', e);
             }
         }
         
@@ -512,17 +650,240 @@
         function toggleChat() {
             const container = document.getElementById('chatContainer');
             container.classList.toggle('hidden');
+            if (container.classList.contains('hidden')) exitFullscreen();
+        }
+        
+        // Toggle fullscreen mode
+        function toggleFullscreen() {
+            const container = document.getElementById('chatContainer');
+            const fullscreenBtn = document.getElementById('fullscreenBtn');
+            
+            if (container.classList.contains('fullscreen')) {
+                exitFullscreen();
+            } else {
+                enterFullscreen();
+            }
+        }
+        
+        function enterFullscreen() {
+            const container = document.getElementById('chatContainer');
+            const fullscreenBtn = document.getElementById('fullscreenBtn');
+            container.classList.add('fullscreen');
+            fullscreenBtn.innerHTML = '<i class="fas fa-compress"></i>';
+        }
+        
+        function exitFullscreen() {
+            const container = document.getElementById('chatContainer');
+            const fullscreenBtn = document.getElementById('fullscreenBtn');
+            container.classList.remove('fullscreen');
+            fullscreenBtn.innerHTML = '<i class="fas fa-expand"></i>';
         }
         
         // Add message to chat
-        function addMessage(text, isUser = false) {
+        function addMessage(text, isUser = false, imageUrl = null) {
             const messagesDiv = document.getElementById('chatMessages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
-            messageDiv.textContent = text;
+            
+            if (imageUrl) {
+                messageDiv.innerHTML = `${text}<br><img src="${imageUrl}" class="image-preview" alt="Uploaded shopping list">`;
+            } else {
+                messageDiv.textContent = text;
+            }
+            
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
             return messageDiv;
+        }
+        
+        async function handleShoppingListConfirmation(extractedItems) {
+            // Store for later confirmation
+            window.pendingShoppingItems = extractedItems;
+            
+            // Clear previous selections
+            const selectionsDiv = document.getElementById('shopping-list-selections') || createSelectionsDiv();
+            selectionsDiv.innerHTML = '';
+            
+            // Create UI for each item
+            extractedItems.forEach((item, idx) => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'shopping-item-selector';
+                itemDiv.style.cssText = 'margin: 15px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px;';
+                
+                let html = `
+                    <div style="font-weight: bold; margin-bottom: 10px;">
+                        ${item.requested_name} (Qty: ${item.quantity})
+                    </div>
+                `;
+                
+                if (item.potential_matches.length === 0) {
+                    html += `<div style="color: red;">❌ No matches found for "${item.requested_name}"</div>`;
+                } else {
+                    html += '<div style="margin-bottom: 10px;">Which product did you mean?</div>';
+                    item.potential_matches.forEach((match, mIdx) => {
+                        const inStock = match.in_stock ? '✅ In Stock' : '❌ Out of Stock';
+                        const radioId = `item-${idx}-match-${mIdx}`;
+                        
+                        html += `
+                            <label style="display: block; margin: 8px 0; cursor: pointer;">
+                                <input type="radio" name="item-${idx}-selection" value="${match.product_name}" id="${radioId}">
+                                <span>${match.product_name} - $${match.price} (${inStock})</span>
+                            </label>
+                        `;
+                    });
+                    
+                    // Pre-select first option
+                    setTimeout(() => {
+                        const firstRadio = document.querySelector(`input[name="item-${idx}-selection"]`);
+                        if (firstRadio) firstRadio.checked = true;
+                    }, 100);
+                }
+                
+                itemDiv.innerHTML = html;
+                selectionsDiv.appendChild(itemDiv);
+            });
+            
+            // Add confirm button
+            const buttonDiv = document.createElement('div');
+            buttonDiv.style.cssText = 'margin: 20px 0; text-align: center;';
+            buttonDiv.innerHTML = `
+                <button id="confirm-shopping-btn" style="
+                    padding: 10px 20px;
+                    background-color: #4CAF50;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 16px;
+                ">✅ Add Selected Items to Cart</button>
+            `;
+            selectionsDiv.appendChild(buttonDiv);
+            
+            // Attach click handler
+            document.getElementById('confirm-shopping-btn').addEventListener('click', confirmShoppingSelection);
+        }
+
+        function createSelectionsDiv() {
+            const div = document.createElement('div');
+            div.id = 'shopping-list-selections';
+            div.style.cssText = 'background: #f9f9f9; padding: 15px; margin: 20px 0; border-radius: 5px; color: black;';
+            
+            const messagesDiv = document.getElementById('chatMessages');
+            messagesDiv.appendChild(div);
+            // Scroll down
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            return div;
+        }
+
+        async function confirmShoppingSelection() {
+            const items = [];
+            
+            window.pendingShoppingItems.forEach((item, idx) => {
+                const selected = document.querySelector(`input[name="item-${idx}-selection"]:checked`);
+                
+                if (selected) {
+                    items.push({
+                        requested_name: item.requested_name,
+                        selected_product: selected.value,
+                        quantity: item.quantity
+                    });
+                }
+            });
+            
+            if (items.length === 0) {
+                showToast('Please select at least one item', 'error');
+                return;
+            }
+            
+            // Send confirmation to backend
+            try {
+                const response = await fetch('/confirm_shopping_items', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        user_id: userId,
+                        items_json: JSON.stringify({ items: items })
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast(`✅ ${data.message}`, 'success');
+                    
+                    // Clear selections
+                    document.getElementById('shopping-list-selections').remove();
+                    window.pendingShoppingItems = [];
+                    
+                    // Sync cart
+                    await syncCartWithBackend();
+                } else {
+                    showToast(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error confirming items:', error);
+                showToast('Error adding items to cart', 'error');
+            }
+        }
+
+        // Handle image upload
+        async function handleImageUpload(input) {
+            if (!input.files || !input.files[0]) return;
+            
+            const file = input.files[0];
+            if (!file.type.startsWith('image/')) {
+                showToast('Please upload an image file', 'error');
+                return;
+            }
+            
+            // Preview image in chat
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const imageUrl = e.target.result;
+                addMessage("📸 Uploaded shopping list:", true, imageUrl);
+                
+                // Send to backend for processing
+                const formData = new FormData();
+                formData.append('user_id', userId);
+                formData.append('image', file);
+                
+                const processingMsg = addMessage("🔄 Processing your shopping list image...", false);
+                
+                try {
+                    const response = await fetch('/process_shopping_image', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    processingMsg.remove();
+                    
+                    if (data.success) {
+                        // Show extracted items with confirmation UI
+                        const itemsText = data.extracted_items
+                            .map(item => `📝 ${item.requested_name} (Qty: ${item.quantity})`)
+                            .join('<br>');
+                        
+                        addMessage(`Found these items in your image:<br><br>${itemsText}`, false);
+                        
+                        // Show selection UI
+                        handleShoppingListConfirmation(data.extracted_items);
+                    } else {
+                        const errorMsg = data.error || "Sorry, I couldn't read the shopping list from this image.";
+                        addMessage("❌ " + errorMsg, false);
+                    }
+                } catch (error) {
+                    processingMsg.remove();
+                    addMessage("Sorry, there was an error processing your image. Please try typing your list instead.", false);
+                    console.error('Upload error:', error);
+                }
+            };
+            reader.readAsDataURL(file);
+            
+            // Reset file input
+            input.value = '';
         }
         
         // Show typing indicator
@@ -552,10 +913,10 @@
             sendMessage();
         }
         
-        // Send message with streaming
+        // Send message (text or pasted list)
         async function sendMessage() {
             if (isStreaming) {
-                addMessage("Please wait for the previous response to finish...", false);
+                addMessage("Please wait for the previous response...", false);
                 return;
             }
             
@@ -575,14 +936,12 @@
             isStreaming = true;
             
             try {
-                console.log('[CHAT] Sending message as user:', userId);
-                
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         message: message,
-                        user_id: userId,  // Use the consistent userId
+                        user_id: userId,
                         cart: cart
                     })
                 });
@@ -604,26 +963,23 @@
                             try {
                                 const jsonData = JSON.parse(line.slice(6));
                                 
-                                // Remove typing indicator when first word arrives
                                 if (!hasReceivedWord && jsonData.word) {
                                     removeTyping();
                                     hasReceivedWord = true;
                                 }
                                 
-                                // Handle word streaming
                                 if (jsonData.word) {
                                     fullText += jsonData.word;
-                                    botMessageDiv.textContent = fullText;
+                                    botMessageDiv.innerHTML = marked.parse(fullText);
+                                    
+                                    // Make links open in new tab
+                                    botMessageDiv.querySelectorAll('a').forEach(a => a.target = '_blank');
+                                    
                                     const messagesDiv = document.getElementById('chatMessages');
                                     messagesDiv.scrollTop = messagesDiv.scrollHeight;
                                 }
                                 
-                                // Handle done signal
-                                if (jsonData.done === true) {
-                                    break;
-                                }
-                                
-                                // Handle clear signal (for holding messages)
+                                if (jsonData.done === true) break;
                                 if (jsonData.clear === true) {
                                     fullText = '';
                                     botMessageDiv.textContent = '';
@@ -635,15 +991,11 @@
                     }
                 }
                 
-                // Ensure typing indicator is removed
                 removeTyping();
-                
-                // If no words were received, show a fallback message
                 if (!hasReceivedWord && botMessageDiv.textContent === '') {
-                    botMessageDiv.textContent = "I'm here to help! What would you like to know?";
+                    botMessageDiv.textContent = "I've processed your request! What else can I help with?";
                 }
                 
-                // Refresh cart after chat (LLM might have added items)
                 await syncCartWithBackend();
                 
             } catch (error) {
@@ -652,13 +1004,6 @@
                 botMessageDiv.textContent = "Sorry, I'm having trouble connecting. Please try again.";
             } finally {
                 isStreaming = false;
-
-                // Handle cart redirect after LLM finishes streaming
-                if (fullText.toLowerCase().includes("I'm thinking...Redirecting you to your cart now.")) {
-                    setTimeout(() => {
-                        window.location.href = "/cart";
-                    }, 500);
-                }
             }
         }
         
@@ -669,23 +1014,22 @@
             toast.textContent = message;
             toast.style.background = type === 'success' ? '#27ae60' : '#e74c3c';
             document.body.appendChild(toast);
-            setTimeout(() => {
-                toast.remove();
-            }, 3000);
+            setTimeout(() => toast.remove(), 3000);
         }
         
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async () => {
-            console.log('[INIT] Page loaded, initializing...');
-            
-            // Initialize userId first
             initializeUserId();
-            
-            // Then load and sync cart
             loadCart();
             await syncCartWithBackend();
-            
-            console.log('[INIT] Complete. userId:', userId, 'Cart items:', cart.length);
+        });
+        
+        // Handle escape key to exit fullscreen
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const container = document.getElementById('chatContainer');
+                if (container.classList.contains('fullscreen')) exitFullscreen();
+            }
         });
     </script>
     {% block extra_js %}{% endblock %}

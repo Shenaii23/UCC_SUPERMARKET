@@ -15,7 +15,7 @@ def _build_inventory_cache() -> dict:
     """
     cache = {}
     for _, row in inventory_df.iterrows():
-        key = row["name"].strip().lower()
+        key = row["product_name"].strip().lower()
         cache.setdefault(key, []).append(row.to_dict())
     return cache
 

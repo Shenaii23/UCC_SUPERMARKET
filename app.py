@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from routes.main_routes import main_router
 from routes.api_routes import cart_router
 from routes.llm_route import llm_router
+from shoppingList.shopping_list import shoplist_router
 
 app = FastAPI()
 
@@ -13,6 +14,8 @@ app.include_router(main_router)
 app.include_router(cart_router)
 # Register the llm route
 app.include_router(llm_router)
+# Register the shopping list route
+app.include_router(shoplist_router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

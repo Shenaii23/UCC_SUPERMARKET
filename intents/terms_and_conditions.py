@@ -60,3 +60,80 @@ async def terms_and_conditions(user_message: str):
     
     
     return llm_response
+
+# Store info handling
+async def prepare_store_info_response(user_message: str) -> str:
+    """
+    Prepare a system prompt for the LLM that includes relevant policy documents.
+    The LLM will answer the user's question based on the actual policy text.
+    """
+    
+    # Get relevant sections from policy documents
+    document_context = get_document_context(user_message)
+    
+    system_prompt = f"""
+    You are a helpful customer service assistant for UCC Supermarket.
+    A customer is asking about our store policies, terms, or privacy practices.
+    
+    Below are the relevant sections from our official policy documents:
+    
+    {document_context}
+    
+    TASK:
+    Answer the customer's question based ONLY on the information provided above.
+    - Be clear, friendly, and professional
+    - If the information isn't in the documents, say so
+    - Don't make up policies or information
+    - Provide specific details like timeframes, procedures, etc.
+    - If there are multiple related points, organize them clearly
+    
+    User's question: "{user_message}"
+    
+    Provide a helpful, accurate answer based on the policy documents above.
+    Format your response as JSON:
+    {{
+        "message": "Your helpful response here",
+        "source": "UCC Supermarket Policies"
+    }}
+    """
+    
+    return system_prompt
+
+# PRepare general chat
+async def prepare_general_chat_response(user_message: str) -> str:
+    """
+    Prepare a system prompt for the LLM that includes relevant policy documents.
+    The LLM will answer the user's question based on the actual policy text.
+    """
+    
+    # Get relevant sections from policy documents
+    document_context = get_document_context(user_message)
+    
+    system_prompt = f"""
+    You are a helpful customer service assistant for UCC Supermarket.
+    A customer is asking about our store policies, terms, or privacy practices.
+    
+    Below are the relevant sections from our official policy documents:
+    
+    {document_context}
+    
+    TASK:
+    Answer the customer's question based ONLY on the information provided above.
+    - Be clear, friendly, and professional
+    - If the information isn't in the documents, say so
+    - Don't make up policies or information
+    - Provide specific details like timeframes, procedures, etc.
+    - If there are multiple related points, organize them clearly
+    
+    User's question: "{user_message}"
+    
+    Provide a helpful, accurate answer based on the policy documents above.
+    Format your response as JSON:
+    {{
+        "message": "Your helpful response here",
+        "source": "UCC Supermarket Policies"
+    }}
+    """
+    
+    return system_prompt
+

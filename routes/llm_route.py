@@ -3,7 +3,9 @@ import json
 import time 
 import pandas as pd
 import asyncio
-from fastapi import APIRouter
+import re
+from typing import List, Dict, Any
+from fastapi import APIRouter, Form
 from fastapi.responses import StreamingResponse
 from models.llm_classes import IntentQuery, Entity
 from services.user_intent_executive import fetch_intent, message_to_llm, intent_detection, llm_response_extraction
@@ -60,8 +62,13 @@ async def process_and_stream(user_message: str, user_id: str):
         return
     
     # For user experience show a message to the user that the LLM is thinking one line at a time, while we do the processing and intent detection
-    async for chunk in stream_message("I'm thinking..."):
+    async for chunk in stream_message("Hmm, let me check..."):
+        if '"done": true' in chunk or '"done": True' in chunk:
+            continue
         yield chunk
+    
+    # Send a double newline so the real answer starts on a new paragraph
+    yield f"data: {json.dumps({'word': '\\n\\n'})}\\n\\n"
 
     # Step 1: Preprocess for corrections/follow-ups
     state = get_user_state(user_id)
@@ -137,9 +144,13 @@ async def process_and_stream(user_message: str, user_id: str):
     except Exception:
         parsed = {"message": str(intent_result)}
     
-    # STEP 6.5: Extract and save products from stock_check responses
-    if detected_intent == "stock_check":
+    # STEP 6.5: Extract and save products from search responses (stock_check OR inventory_check)
+    actual_intent = get_user_state(user_id).get("last_intent", detected_intent)
+    if actual_intent in ["stock_check", "inventory_check", "follow_up"]:
         extracted_products = extract_product_names_from_response(parsed.get("message", ""), parsed)
+        if actual_intent == "inventory_check" and not extracted_products and parsed.get("products"):
+             extracted_products = parsed["products"] # Backup for inventory_check structure
+             
         if extracted_products:
             save_products(user_id, extracted_products)
             #print(f"[Extract] Found {len(extracted_products)} products: {[p['product_name'] for p in extracted_products]}")
@@ -158,7 +169,7 @@ async def process_and_stream(user_message: str, user_id: str):
     state["history"].append({"role": "assistant", "content": message_text})  # FORMATTED response
     
     # Update all other state info
-    state["last_intent"]       = detected_intent
+    # Note: state["last_intent"] is now updated directly inside intent_detection() after all overrides
     state["last_entities"]     = entities.dict() if hasattr(entities, "dict") else {}
     state["last_user_message"] = user_message
     state["last_response"]     = message_text
@@ -226,3 +237,6 @@ async def detect_intent(query: IntentQuery):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+

@@ -58,10 +58,15 @@ async def prepare_stock_response(entities: Entity, user_message: str):
     2. When in doubt, INCLUDE the product - let the user decide
     3. Only exclude products that are clearly unrelated (e.g., "apple juice" when searching for "apple sauce")
     4. Include all variants and related products (e.g., whole milk, skim milk, chocolate milk, cashew milk all count as "milk")
-    5. Provide a friendly, natural response that mentions the products you found, their prices, and quantities. For example, "We have whole milk ($350) and chocolate milk ($400) in stock!"
+    5. Provide a friendly, natural response. ALWAYS list the products you found, their prices, and quantities using a Markdown bulleted list, with each product on its own line.
     6. If no products are found, respond with a friendly message saying you couldn't find any matches, and maybe suggest checking the spelling or trying a different search term.
-    7. If you have a variety of matches, you can group them in your response. For example, "We have several milk options available: whole milk ($350), skim milk ($300), chocolate milk ($400), and cashew milk ($450)!"
-    8. In your response, ask the user if they would like to add any of the found products to their cart.
+    7. If you have a variety of matches, introduce them and then list them out using Markdown bullets. For example:
+       "We have several milk options available! Here's what we found:
+       - Whole milk ($350)
+       - Skim milk ($300)
+       - Chocolate milk ($400)
+       - Cashew milk ($450)"
+    8. At the end of your response, ask the user if they would like to add any of the found products to their cart.
 
     OUTPUT FORMAT (JSON only, no other text):
     {{
@@ -77,29 +82,29 @@ async def prepare_stock_response(entities: Entity, user_message: str):
     }}
 
     EXAMPLES:
-
+    
     User searched: "apple sauce"
     Inventory: [Apple Sauce, Unsweetened Applesauce, Apple Juice]
     {{
-        "message": "We have Apple Sauce ($150) and Unsweetened Applesauce ($120) in stock. Would you like to add either of these to your cart?",
+        "message": "We have a few apple sauce options in stock:\\n- Apple Sauce ($150)\\n- Unsweetened Applesauce ($120)\\n\\nWould you like to add either of these to your cart?",
         "products": [
             {{"product_name": "Apple Sauce", "quantity": 25, "price": 150}},
             {{"product_name": "Unsweetened Applesauce", "quantity": 10, "price": 120}}
         ],
         "action_ready": true
     }}
-
+    
     User searched: "ackee"
     Inventory: [Ackee - Canned, Ackee - Frozen, Blackberries - Fresh]
     {{
-        "message": "We have ackee available! We've got canned ($450) and frozen ($550) options. Would you like to add either of these to your cart?",
+        "message": "We have ackee available! We've got:\\n- Canned Ackee ($450)\\n- Frozen Ackee ($550)\\n\\nWould you like to add either of these to your cart?",
         "products": [
             {{"product_name": "Ackee - Canned", "quantity": 35, "price": 450}},
             {{"product_name": "Ackee - Frozen", "quantity": 20, "price": 550}}
         ],
         "action_ready": true
     }}
-
+    
     Now process the user's search.
     """.format(user_message=user_message, product_to_find=product_to_find, context=context)
     
@@ -110,21 +115,75 @@ async def prepare_stock_response(entities: Entity, user_message: str):
 
 async def prepare_cart_response(entities: Entity, user_message: str, user_id: str):
     """
-    Handles adding items to the cart contextually.
+    Handles adding items to the cart contextually, resolving vague mentions and affirmations using fuzzy matching.
     """
+    import re
     from services.llm_response import get_products
     from intents.cart_logic import get_cart_items
     
-    # Check if we have products in the current session (from a recent stock_check)
     session_products = get_products(user_id)
     current_cart     = get_cart_items(user_id)
     
+    # --- Python-Level Context Resolution (Fuzzy Match / Affirmations) ---
+    msg_lower = user_message.lower().strip()
+    resolved_products = []
+    
+    # 1. Affirmations (Yes, add it, etc.) -> default to top match
+    affirmations = ["yes", "yes please", "yep", "yeah", "add it", "add that", "sure", "ok", "okay", "that one", "the first one"]
+    is_affirmation = any(msg_lower == aff for aff in affirmations) or msg_lower.startswith("yes")
+    
+    if session_products:
+        if is_affirmation:
+            # Add top result
+            resolved_products.append(session_products[0])
+        else:
+            # 2. Fuzzy Matching
+            user_tokens = set(re.findall(r'\w+', msg_lower)) - {"add", "the", "to", "cart", "please", "my", "some", "a", "an", "i", "want"}
+            
+            scored_products = []
+            for p in session_products:
+                p_name_lower = p['product_name'].lower()
+                p_tokens = set(re.findall(r'\w+', p_name_lower))
+                
+                # Check for substring match
+                substring_match = any(user_token in p_name_lower for user_token in user_tokens if len(user_token) > 2)
+                
+                # Token overlap
+                overlap = len(user_tokens.intersection(p_tokens))
+                
+                score = overlap * 2
+                if substring_match:
+                    score += 1
+                if p_name_lower in msg_lower:
+                    score += 5
+                    
+                if score > 0:
+                    scored_products.append((score, p))
+            
+            if scored_products:
+                # Sort by score descending
+                scored_products.sort(key=lambda x: x[0], reverse=True)
+                top_score = scored_products[0][0]
+                # Filter to top matches (in case of ties)
+                resolved_products = [p for s, p in scored_products if s == top_score]
+                
+                # If they said "all of them", add everything
+                word_tokens = re.findall(r'\w+', msg_lower)
+                if "all" in word_tokens or "both" in word_tokens:
+                    resolved_products = session_products
+
     product_context = ""
     if session_products:
-        product_context = "RECENT SEARCH RESULTS (User might be referring to these):\n"
+        product_context += "RECENT SEARCH RESULTS:\n"
         for p in session_products:
             product_context += f"- {p['product_name']} (${p['price']})\n"
-    
+            
+    if resolved_products:
+        product_context += f"\nSYSTEM HAS RESOLVED USER'S REQUEST TO EXACTLY THESE PRODUCT(S):\n"
+        for p in resolved_products[:1]:  # Ensure we just grab the best match to avoid confusion
+            product_context += f"-> {p['product_name']} (${p['price']})\n"
+        product_context += "\nCRITICAL: DO NOT ASK FOR CLARIFICATION! The system has successfully resolved the vague item to the correct match above. Output valid JSON adding it immediately.\n"
+
     cart_context = ""
     if current_cart:
         cart_context = "CURRENT CART CONTENT:\n"
@@ -138,25 +197,20 @@ async def prepare_cart_response(entities: Entity, user_message: str, user_id: st
     User Message: "{user_message}"
     
     {product_context}
+    
     {cart_context}
     
     TASK:
-    1. Identify which exact product(s) the user wants to add based on the message and context.
-    2. If the user provided a name that matches or nearly matches a product in the "RECENT SEARCH RESULTS", use that exact product name and price.
-    3. If they said "all" or mentioned multiple, add all of them.
-    4. If the product is not in the context, BUT it's a very specific request, you can still add it if you're confident, or ask for clarification.
+    1. Check if the SYSTEM HAS RESOLVED the product. If yes, you MUST USE the resolved product(s) exactly. Do NOT ask for clarification. Proceed automatically.
+    2. If no resolved products are provided, identify which product(s) the user wants from the "RECENT SEARCH RESULTS" based on their message.
+    3. If they clearly said "all" or "both", add all from the recent search.
+    4. If the product is entirely missing from context but is a specific request, you can add it if confident or ask for clarification.
     5. Always return JSON.
-    6. Ensure the "message" is friendly and confirms what was added. Mention the total items in the cart now if appropriate.
-
-    IMPORTANT:
-    - if the users last intent was recipe recommendation and the user asks for the item 
-    to be placed in the cart (e.g. "add the first one to my cart"), make sure to check the products in the recent search results
-    first return a message that will ask for confirmation of the products before adding to the cart. For example,
-      "Just to confirm, you want to add [Product Name] to your cart, is that correct?" 
+    6. Ensure the "message" is friendly and confirms what was added, without asking follow-up questions about the item just added.
     
     OUTPUT FORMAT (JSON only):
     {{
-        "message": "Perfect! I've added [Product] to your cart. You now have [N] items in your basket.",
+        "message": "Perfect! I've added [Product] to your cart.",
         "added_products": [
             {{"product_name": "exact name", "quantity": 1, "price": 0.00}}
         ],
@@ -278,55 +332,99 @@ async def prepare_check_recipe_availability_response(entities: Entity, user_mess
     }}
     """.format(user_message=user_message, context=context)
  
- 
-async def prepare_budget_recipe_response(entities: Entity, user_message: str) -> str:
+
+
+async def prepare_budget_recipe_response(entities, user_message: str) -> str:
     """
-    Finds recipes within the user's budget and builds a prompt
-    for the LLM to respond with suggestions.
+    Ask context questions before recommending recipes.
+    Understand: cooking style, cuisine preference, meal type, dietary restrictions, etc.
     """
     from intents.budget_recipe_suggestion import budget_recipe_suggestion
- 
+    
+    budget = entities.budget
+    
+    # Check if user provided any context clues
+    cuisine_keywords = ["italian", "jamaican", "asian", "mexican", "indian", "caribbean", "american", "chinese", "spanish"]
+    meal_keywords = ["breakfast", "lunch", "dinner", "snack", "appetizer", "dessert", "main", "side"]
+    diet_keywords = ["vegan", "vegetarian", "gluten", "healthy", "quick", "easy", "simple", "light"]
+    
+    has_cuisine = any(keyword in user_message.lower() for keyword in cuisine_keywords)
+    has_meal = any(keyword in user_message.lower() for keyword in meal_keywords)
+    has_diet = any(keyword in user_message.lower() for keyword in diet_keywords)
+    
+    # If no context provided, ask first
+    if not (has_cuisine or has_meal or has_diet):
+        system_prompt = f"""
+        You are a helpful, friendly grocery store assistant.
+        User message: "{user_message}"
+        User budget: ${budget}
+        
+        CONTEXT: The user has a budget and wants recipe ideas, but hasn't specified their preferences yet.
+        
+        YOUR TASK: Ask clarifying questions to understand what they want to cook!
+        
+        Ask about:
+        1. What meal (breakfast, lunch, dinner, snack, or something special)
+        2. Any cuisine they prefer (Jamaican, Italian, quick & easy, comfort food, healthy, etc.)
+        3. Who they're cooking for (just themselves, family, guests)
+        4. Any dietary preferences or restrictions
+        
+        BE CONVERSATIONAL: Don't ask as a list. Make it sound natural and friendly!
+        
+        Example: "Perfect! With $2000 you can make something really tasty! Before I suggest recipes, tell me - what kind of meal are you thinking? Like a quick weeknight dinner, something fancy for guests, or maybe breakfast? And do you have any preferences - are you in the mood for something light and healthy, or more comfort food?"
+        
+        OUTPUT (JSON only):
+        {{
+            "message": "Your conversational question about their preferences",
+            "action_ready": false
+        }}
+        """
+        return system_prompt
+    
+    # If we have context, get recommendations
     result = budget_recipe_suggestion(entities)
- 
-    if result.get("error"):
-        context = result["error"]
-    elif not result["suggestions"]:
-        context = f"No recipes found within budget of ${result['budget']}."
+    
+    if result.get("error") or not result["suggestions"]:
+        context = f"No recipes found within ${budget} budget."
     else:
         lines = []
-        for r in result["suggestions"]:
-            missing = f" (missing: {', '.join(r['missing_ingredients'])})" if r["missing_ingredients"] else ""
-            lines.append(
-                f"- {r['recipe_name']} | Est. cost: ${r['estimated_cost']} | Serves: {r['servings']}{missing}"
-            )
-        context = f"Budget: ${result['budget']}\n" + "\n".join(lines)
- 
-    return """
-    You are a grocery store assistant API.
-    The user's message is: "{user_message}"
- 
-    Here are recipe suggestions within the user's budget:
+        for r in result["suggestions"][:5]:
+            missing = ""
+            if r.get("missing_ingredients"):
+                missing_list = r["missing_ingredients"][:2]
+                missing = f" (just need: {', '.join(missing_list)})"
+            lines.append(f"• {r['recipe_name']} — ${r['estimated_cost']} | Serves {r['servings']}{missing}")
+        context = "\n".join(lines)
+    
+    system_prompt = f"""
+    You are a friendly, enthusiastic grocery store assistant.
+    User budget: ${budget}
+    User said: "{user_message}"
+    
+    Recipe suggestions within their budget:
     {context}
- 
-    YOUR TASK:
-    1. Present the recipe options in a friendly, enthusiastic way.
-    2. Mention the estimated cost and servings for each.
-    3. If any ingredients are missing, mention it briefly but keep it positive.
-    4. If no recipes were found, apologise and suggest a higher budget.
- 
-    OUTPUT FORMAT (JSON only, no other text):
+    
+    INSTRUCTIONS:
+    - Be warm and conversational (not robotic)
+    - Talk ABOUT the recipes, don't just list them
+    - Pick 2-3 favorites and describe why they're great
+    - Mention they're within budget
+    - If they're missing ingredients, frame positively: "You'll just need to pick up X"
+    - Ask which one sounds good or if they want more options
+    - NO BULLET POINTS - write naturally!
+    
+    OUTPUT (JSON only):
     {{
-        "message": "A friendly message listing the recipe suggestions",
+        "message": "Conversational response. Example: 'Great choices within your budget! The Shepherd's Pie is perfect if you're feeding a family - hearty, delicious, and only costs $270. If you want something quicker, the Fried Plantain is amazing and super affordable at $320. Both are crowd-pleasers! Which sounds better to you, or should I suggest something else?'",
         "suggestions": [
-            {{
-                "recipe_name": "name",
-                "estimated_cost": 0.00,
-                "servings": 4
-            }}
+            {{"recipe_name": "name", "estimated_cost": 0.00, "servings": 4}}
         ],
         "action_ready": false
     }}
-    """.format(user_message=user_message, context=context)
+    """
+    
+    return system_prompt 
+
  
 async def prepare_recommend_recipe_response(entities: Entity, user_message: str, recommendations: dict = None) -> str:
     """
@@ -441,3 +539,133 @@ OUTPUT FORMAT (JSON only, no other text):
     "action_ready": false
 }}
 """.format(user_message=user_message, context=context)
+
+
+async def prepare_aisle_location_response(entities, user_message: str) -> str:
+    """
+    Prepare system prompt for aisle/location queries.
+    User asks: "Where can I find bread?" or "What aisle is milk in?"
+    """
+    from intents.stock_check import get_product_aisle
+    
+    product_name = entities.product_name
+    aisle_info = get_product_aisle(product_name) if product_name else None
+    
+    if not aisle_info:
+        context = f"Product '{product_name}' not found in our inventory."
+        aisle_number = None
+    else:
+        context = f"""
+Product: {aisle_info['product_name']}
+Category: {aisle_info['category']}
+Aisle: {aisle_info['aisle']}
+Location Details: {aisle_info['location_details']}
+"""
+        aisle_number = aisle_info.get('aisle')
+    
+    system_prompt = f"""
+    You are a friendly and helpful UCC Supermarket store assistant.
+    A customer is asking where to find a product in the store.
+    
+    Customer question: "{user_message}"
+    
+    Product location information:
+    {context}
+    
+    INSTRUCTIONS:
+    - Be warm and friendly
+    - Give clear, easy-to-follow directions
+    - If product not found, apologize and suggest they ask a staff member
+    - Always mention aisle number if available
+    - Include location details (left side, back wall, etc)
+    - Keep response short and natural
+    - Do NOT use lists or bullet points
+    
+    OUTPUT FORMAT (JSON only):
+    {{
+        "message": "Your friendly directions here. For example: 'You'll find our bread in Aisle 5 on the right side of the store, usually on the middle shelf. Let me know if you need help finding anything else!'",
+        "aisle": {aisle_number},
+        "action_ready": false
+    }}
+    """
+    
+    return system_prompt
+
+
+# Prepare store info response
+
+async def prepare_store_info_response(entities, user_message: str) -> str:
+    """
+    Prepare system prompt for store info queries.
+    User asks: "What are your store hours?" or "Where is the pharmacy?"
+    """
+    from intents.store_info import get_store_info
+    
+    store_info = get_store_info()
+    
+    context = f"""
+Store Information:
+- Name: {store_info['name']}
+- Address: {store_info['address']}
+- Phone: {store_info['phone']}
+- Hours: {store_info['hours']}
+- Departments: {', '.join(store_info['departments'])}
+"""
+    
+    system_prompt = f"""
+    You are a friendly and helpful UCC Supermarket store assistant.
+    A customer is asking for information about the store.
+    
+    Customer question: "{user_message}"
+    
+    Store information:
+    {context}
+    
+    INSTRUCTIONS:
+    - Be warm and friendly
+    - Provide clear, concise answers
+    - Mention store name, address, phone, hours, and departments
+    - Keep response short and natural
+    - Do NOT use lists or bullet points
+    
+    OUTPUT FORMAT (JSON only):
+    {{
+        "message": "Your friendly response here. For example: 'Welcome to UCC Supermarket! We're located at 123 Main Street and are open Monday-Saturday from 8am-9pm.
+         You can reach us at 555-1234. We have departments like produce, dairy, meat, and a pharmacy.
+         Let me know if you need anything else!'",
+        "action_ready": false
+    }}
+    """
+    
+    return system_prompt
+
+
+
+
+async def prepare_add_inventory_to_cart_response(product_names: List[str], user_message: str) -> str:
+    """
+    Prepare response for adding inventory items to cart.
+    """
+    if not product_names:
+        return json.dumps({"message": "No products selected. Which product would you like to add?"})
+    
+    product_str = ", ".join(product_names) if len(product_names) <= 3 else f"{', '.join(product_names[:3])}, and more"
+    
+    return f"""
+    You are a helpful UCC Supermarket assistant.
+    User wants to add these items to cart: {product_str}
+    User message: "{user_message}"
+    
+    INSTRUCTIONS:
+    - Confirm the items they want to add
+    - Ask for quantities if not specified
+    - Be helpful and quick
+    - Format the response naturally
+    
+    OUTPUT (JSON only):
+    {{
+        "message": "Perfect! I'll add {product_names[0]} to your cart. How many would you like?",
+        "products_to_add": {product_names},
+        "action_ready": true
+    }}
+    """

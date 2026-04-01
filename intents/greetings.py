@@ -31,7 +31,7 @@ LIST_OF_GREETINGS = [
     # Friendly / expressive Jamaican greetings
     'bless', 'bless up', 'blessings', 'respect', 'respek',
     'big up', 'big up yuhself', 'big up yourself',
-    'hail', 'hail up', 'hail mi boss',
+    'hail', 'hail up', 'hail mi boss', 'heyo', 'heya',
     # Social / checking in
     'how yuh stay', 'how yuh deh', 'how yuh dey',
     'how yuh do', 'how yuh a do',

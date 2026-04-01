@@ -19,7 +19,8 @@ def get_user_state(user_id: str) -> Dict[str, Any]:
             "last_suggestions":  [],   # stores recipe names from last recommendation
             "history":           [],   # stores full chat history for the LLM
             "raw_history":       [],   # stores raw user messages and assistant responses for context
-            "pending_selection": []
+            "pending_selection": [],
+            "last_inventory_products": []
         }
     return USER_SESSIONS[user_id]
 
