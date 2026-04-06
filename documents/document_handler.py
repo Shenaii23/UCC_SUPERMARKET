@@ -14,7 +14,8 @@ DOCUMENTS = {
     "privacy_policy": "documents/UCC_Privacy_Full.pdf",
     "llm_guidelines": "documents/UCC_LLM_Full.pdf",
     "store_info": "documents/UCC_Store_Info.pdf",
-    "general_chat": "documents/General_Chat_Guide.pdf"
+    "general_chat": "documents/General_Chat_Guide.pdf",
+    'deals_and_promotions': "documents/DEALS_PROMO.pdf"
 }
 
 # Cache file to store document content and hashes
@@ -174,7 +175,8 @@ class DocumentManager:
             "privacy_policy": ["privacy", "data", "personal", "information", "collect"],
             "llm_guidelines": ["ai", "llm", "algorithm", "automated", "decision"],
             "store_info": ["store", "hours", "location", "address", "phone", "departments"],
-            "general_chat": ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "good night"]
+            "general_chat": ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "good night"],
+            "deals_and_promotions": ["deal", "promotion", "discount", "sale", "offer", 'promo', 'discounts']
         }
         
         # Find relevant documents

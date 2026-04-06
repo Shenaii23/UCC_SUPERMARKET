@@ -93,13 +93,15 @@ function initializeChatbot() {
         });
     }
     
-    function sendMessage() {
+    function sendMessage(text = null) {
         if (!chatInput || !chatMessages) return;
-        const message = chatInput.value.trim();
+        const message = text !== null ? text : chatInput.value.trim();
         if (!message) return;
         
         addUserMessage(message);
-        chatInput.value = '';
+        if (text === null) {
+            chatInput.value = '';
+        }
         
         // Show thinking indicator
         showThinking();
@@ -120,11 +122,105 @@ function initializeChatbot() {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
     
+    function escapeHTML(text) {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function parseSelectionItems(text) {
+        const normalized = text
+            .replace(/\r\n?/g, '\n')
+            .replace(/•\s*/g, '\n- ')
+            .replace(/(^|\n)-\s*/g, '\n- ');
+        const lines = normalized.split(/\n+/);
+        const items = lines
+            .map(line => line.trim())
+            .filter(line => line.startsWith('- '))
+            .map(line => line.slice(2).trim())
+            .filter(line => line.length > 0);
+        return items.length ? items : null;
+    }
+
+    function createSelectionPanel(items) {
+        const panel = document.createElement('div');
+        panel.className = 'product-selection';
+
+        const instructions = document.createElement('div');
+        instructions.className = 'selection-instructions';
+        instructions.textContent = 'Select one or more items and send them to the assistant.';
+        panel.appendChild(instructions);
+
+        const list = document.createElement('div');
+        list.className = 'product-selection-list';
+
+        items.forEach((item, idx) => {
+            const label = document.createElement('label');
+            label.className = 'product-option';
+            label.htmlFor = `product-option-${idx}`;
+            label.innerHTML = `
+                <input type="checkbox" id="product-option-${idx}" data-item="${escapeHTML(item)}">
+                <span>${escapeHTML(item)}</span>
+            `;
+            list.appendChild(label);
+        });
+        panel.appendChild(list);
+
+        const actions = document.createElement('div');
+        actions.className = 'product-selection-actions';
+
+        const submitButton = document.createElement('button');
+        submitButton.type = 'button';
+        submitButton.textContent = 'Send selection';
+        submitButton.className = 'selection-send-btn';
+        submitButton.addEventListener('click', () => {
+            const checked = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'));
+            if (!checked.length) return;
+            const selection = checked.map(input => input.dataset.item).join(', ');
+            sendMessage(selection);
+        });
+
+        const clearButton = document.createElement('button');
+        clearButton.type = 'button';
+        clearButton.textContent = 'Clear';
+        clearButton.className = 'selection-clear-btn';
+        clearButton.addEventListener('click', () => {
+            panel.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        });
+
+        actions.appendChild(clearButton);
+        actions.appendChild(submitButton);
+        panel.appendChild(actions);
+
+        return panel;
+    }
+
+    function formatBotMessage(text) {
+        const safeText = escapeHTML(text)
+            .replace(/\r\n?/g, '\n')
+            .replace(/(^|\n)•\s*/g, '$1- ')
+            .replace(/(^|\n)-\s*/g, '$1- ');
+        if (typeof marked !== 'undefined') {
+            return marked.parse(safeText);
+        }
+        return safeText.replace(/\n/g, '<br>');
+    }
+
     function addBotMessage(text) {
         if (!chatMessages) return;
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message bot';
-        messageDiv.textContent = text;
+        messageDiv.innerHTML = formatBotMessage(text);
+
+        const selectionItems = parseSelectionItems(text);
+        if (selectionItems) {
+            const panel = createSelectionPanel(selectionItems);
+            messageDiv.appendChild(panel);
+        }
+
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }

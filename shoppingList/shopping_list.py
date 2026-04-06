@@ -35,6 +35,29 @@ async def process_shopping_image(
     Process uploaded image, extract items, and ask user to confirm matches.
     Does NOT add to cart automatically - requires confirmation.
     """
+
+    MAX_UPLOAD_COUNT = 3
+    MAX_IMAGE_SIZE = 5 * 1024 * 1024
+    
+    #TODO: add time limit so user can upload after 24 hours or reset count after 24 hours for now just 3 uploads per user id. This is to prevent abuse of the image processing feature which is more resource intensive than text input. We can track uploads by user id and reset counts after 24 hours. For now we will just limit to 3 uploads per user id and they can use text input if they reach the limit. In the future we can implement a more robust system for tracking and limiting uploads.
+
+    # Check if user has uploaded too many images
+    if f"upload_count_{user_id}" not in os.environ:
+        os.environ[f"upload_count_{user_id}"] = "0"
+    upload_count = int(os.environ[f"upload_count_{user_id}"])
+    if upload_count >= MAX_UPLOAD_COUNT:
+        return {
+            "success": False,
+            "error": f"You have reached the maximum upload limit of {MAX_UPLOAD_COUNT} images. You can upload more images in 24 hours. For now you can paste your shopping list as text or use the app to add items to your cart."
+        }
+    
+    # Check file size
+    if image.size > MAX_IMAGE_SIZE:
+        return {
+            "success": False,
+            "error": f"Image size exceeds the maximum limit of {MAX_IMAGE_SIZE / (1024 * 1024)} MB. Please upload a smaller image."
+        }
+    
     try:
         # Read image
         img = Image.open(image.file)

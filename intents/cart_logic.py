@@ -105,6 +105,23 @@ def cart_summary(user_id: str):
     summary += f"\nTotal: ${total:.2f}"
     return summary
 
+
+def formatted_cart_summary(user_id: str) -> str:
+    user_cart = carts.get(user_id, [])
+    if not user_cart:
+        return "Your cart is empty right now. Would you like to add anything else?"
+
+    total = sum(item['price'] * item['quantity'] for item in user_cart)
+    lines = ["Here's what's in your cart:", ""]
+    for item in user_cart:
+        lines.append(f"    {item['product_name']} (x{item['quantity']}): ${item['price'] * item['quantity']:.2f}")
+        lines.append("")
+
+    lines.append(f"Total: ${total:.2f}")
+    lines.append("")
+    lines.append("Are you ready to checkout, or would you like to add anything else to your order?")
+    return "\n".join(lines)
+
 # Clear cart
 def clear_cart(user_id: str):
     carts[user_id] = []

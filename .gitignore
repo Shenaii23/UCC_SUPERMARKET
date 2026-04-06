@@ -1,3 +1,4 @@
 .env
 .agent.md
 user_messages.csv
+__pycache__

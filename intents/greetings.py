@@ -233,15 +233,11 @@ CART_MESSAGES = [
 def handle_cart(user_id):
     """Handle user's cart"""
     from services.context_handler import get_user_state
-    # Get cartfrom the json file using the user_id, if it doesn't exist return empty cart
-    from intents.cart_logic import cart_summary
+    from intents.cart_logic import formatted_cart_summary
 
-    cart = cart_summary(user_id)
-    print("[Cart Handler] Current cart for user_id", user_id, ":", cart)
-
-    if not cart:
-        return "Your cart is empty right now. Would you like to add some items? I can help you find products and add them to your cart!"
-    return f"You have the following items in your cart: {cart}."
+    cart_message = formatted_cart_summary(user_id)
+    print("[Cart Handler] Current cart for user_id", user_id, ":", cart_message)
+    return cart_message
 
 def is_greeting(user_message: str) -> str | None:
     """

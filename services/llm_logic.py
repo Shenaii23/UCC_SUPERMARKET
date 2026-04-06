@@ -1,117 +1,367 @@
 # services/llm_logic.py
+import json
+
+import json
+
 from models.llm_classes import Entity
 
 # intent files
 from intents.check_recipe_availability import get_recipe_data
-from intents.stock_check import get_inventory_data
 from services.context_handler import update_user_state, get_user_state
+from intents.stock_check import (get_proactive_matches, extract_category_from_query)
+from datasets.data import inventory_df
+from typing import List, Dict
 
-#from intents.cart_logic import add_to_cart, remove_from_cart, cart_summary, cart_statement, clear_cart
-#from intents.get_recipe import get_recipe_logic
-#from intents.budget_recipe_suggestion import budget_recipe_suggestion_logic
-#from intents.recommend_recipe import recommend_recipe_logic
-#from intents.general_chat import general_chat_logic
 
-# Stock checking function that will be used in the llm_route to check the inventory 
-# for the given product name and return the available quantity, prices etc.
+from typing import Tuple, Optional, List, Dict
+from rapidfuzz import fuzz
+import logging
+
+logger = logging.getLogger(__name__)
+
 async def prepare_stock_response(entities: Entity, user_message: str):
     """
-    Docstring for prepare_stock_response
+    Search for products in inventory and return results.
     
-    :param entities: The entities extracted from the user's message
-    :type entities: Entity
-    :param user_message: The original user message
-    :type user_message: str
-    This function checks the inventory for the given product name
-      and returns the available quantity.
+    Returns:
+        Tuple[Union[Dict, List[Dict], None], bool]:
+            - (product/products, True) if found
+            - (None, False) if not found (with fallback prompt prepared)
+    
+    Examples:
+        User: "do you have milk"
+        → ({"product_name": "Whole Milk", ...}, True)
+        
+        User: "do you have xyz123"
+        → (None, False)  # Fallback: "We couldn't find xyz123. Did you mean...?"
     """
-
-
-    # Use the cleaned data from the pydantic model to search the inventory.
-    product_to_find = entities.product_name
-
-    # Get the category hint
+    
+    product_to_find = entities.product_name.lower().strip()
+    
+    # Handle plural forms
+    if product_to_find.endswith('s') and not product_to_find.endswith('ss'):
+        singular_version = product_to_find[:-1]
+        product_to_find = f"{product_to_find}|{singular_version}"
+        print(f"DEBUG: Searching for both plural and singular: '{product_to_find}'")
+    
+    # Get category hint
     category = entities.category_hint
+    category = extract_category_from_query(category)
+    
+    # Search inventory
+    results = get_proactive_matches(product_to_find, inventory_df, threshold=65)
+    
+    # ========== CASE 1: PRODUCTS FOUND ==========
+    if results:
+        logger.info(f"[STOCK] Found {len(results)} products for '{product_to_find}'")
+        
+        # Format context for LLM
+        context = "\n".join([
+            f"- {r.get('product_name', '')} (Quantity: {r.get('quantity', 0)}, Price: ${r.get('price', 0)})"
+            for r in results
+        ])
+        
+        inventory_prompt = """
+        You are a helpful grocery store assistant.
 
-    # Get the data from the get inventory_data function to use in the system prompt for the LLM.
-    results = get_inventory_data(product_to_find, category)
+        The users original message is: "{user_message}"
+        The user searched for: "{product_to_find}"
 
-    # Format the results into sting for the llm 
-    if not results:
-        context = f"No matching products found in inventory for search term: {product_to_find}"
+        Here are the matching products from our inventory:
+        {context}
+
+        YOUR TASK:
+        1. Select products that match exactly what the user asked for.
+        2. When in doubt, INCLUDE the product - let the user decide
+        3. Only exclude products that are clearly unrelated
+        4. Include all variants and related products
+        5. Provide a friendly, natural response using PLAIN TEXT with newlines
+        6. List products with each on a new line
+        7. At the end, ask if they'd like to add any to their cart
+        8. Use only plain text formatting - NO HTML tags
+
+        OUTPUT FORMAT (JSON only):
+        {{
+            "message": "A friendly message to show the user",
+            "products": [
+                {{
+                    "product_name": "exact name from inventory",
+                    "quantity": available quantity,
+                    "price": price
+                }}
+            ],
+            "action_ready": true
+        }}
+        """.format(user_message=user_message, product_to_find=product_to_find, context=context)
+        
+        try:
+            from services.user_intent_executive import message_to_llm
+            llm_response = await message_to_llm(inventory_prompt, user_message, [])
+            parsed = json.loads(llm_response)
+            return (parsed.get("products", results), True)
+        except:
+            # If LLM response parsing fails, return raw results
+            return (results, True)
+    
+    # ========== CASE 2: NO PRODUCTS FOUND ==========
     else:
-        context = "Found these items:\n" + "\n".join([str(r) for r in results])
+        logger.info(f"[STOCK] No products found for '{product_to_find}'")
+        
+        # ✅ RETURN: (None, False) - Triggers fallback
+        return (None, False)
 
-    # Set up the system prompt for the LLM with the context and instructions for intent detection.
-    inventory_prompt = """
-    You are a helpful grocery store assistant. 
 
-    The users original message is: "{user_message}"
+# ========== HELPER: Get product with fallback handling ==========
+async def search_product_with_fallback(
+    user_id: str,
+    product_name: str,
+    entities: Entity,
+    user_message: str = ""
+) -> Dict:
+    """
+    Search for a product and handle fallback if not found.
+    
+    Returns:
+        {
+            "found": bool,
+            "products": [...] or None,
+            "message": str,
+            "action_ready": bool,
+            "fallback_prompted": bool
+        }
+    
+    Examples:
+        Product found:
+        {
+            "found": True,
+            "products": [...],
+            "message": "We have milk: Whole Milk ($350), Skim Milk ($300)",
+            "action_ready": True,
+            "fallback_prompted": False
+        }
+        
+        Product not found:
+        {
+            "found": False,
+            "products": None,
+            "message": "We couldn't find xyz123. Did you mean apple juice?",
+            "action_ready": False,
+            "fallback_prompted": True
+        }
+    """
+    
+    # Use passed entities
+    entities.product_name = product_name
+    
+    # Search inventory
+    products, found = await prepare_stock_response(entities, user_message)
+    
+    # ========== HANDLE FOUND CASE ==========
+    if found and products:
+        logger.info(f"[SEARCH] Found products: {len(products) if isinstance(products, list) else 1}")
+        
+        return {
+            "found": True,
+            "products": products if isinstance(products, list) else [products],
+            "message": format_product_message(products),
+            "action_ready": True,
+            "fallback_prompted": False
+        }
+    
+    # ========== HANDLE NOT FOUND CASE - TRIGGER FALLBACK ==========
+    else:
+        
+        # Generate helpful fallback message
+        fallback_message = await generate_fallback_prompt(
+            product_name=product_name,
+            user_message=user_message
+        )
+        
+        return {
+            "found": False,
+            "products": None,
+            "message": fallback_message,
+            "action_ready": False,
+            "fallback_prompted": True
+        }
 
-    The user searched for: "{product_to_find}"
 
-    Here are the matching products from our inventory:
-    {context}
-
+# ========== HELPER: Generate fallback prompt when product not found ==========
+async def generate_fallback_prompt(product_name: str, user_message: str = "") -> str:
+    """
+    Generate a helpful fallback message when product is not found.
+    
+    Includes:
+    1. Empathetic message
+    2. Suggestions for similar products (if available)
+    3. Help text (spelling, search tips)
+    
+    Returns:
+        str: User-friendly message
+    """
+    
+    # Try to find similar products for suggestions
+    similar_products = find_similar_products(product_name, max_results=3)
+    
+    fallback_prompt = f"""
+    You are a helpful UCC Supermarket assistant.
+    
+    The user searched for: "{product_name}"
+    Full message: "{user_message}"
+    
+    Unfortunately, we don't currently have "{product_name}" in stock.
+    
+    Here are some similar products we do have:
+    {format_similar_products(similar_products)}
+    
     YOUR TASK:
-    1. Select products that match what exactly what the user asked for.
-    2. When in doubt, INCLUDE the product - let the user decide
-    3. Only exclude products that are clearly unrelated (e.g., "apple juice" when searching for "apple sauce")
-    4. Include all variants and related products (e.g., whole milk, skim milk, chocolate milk, cashew milk all count as "milk")
-    5. Provide a friendly, natural response. ALWAYS list the products you found, their prices, and quantities using a Markdown bulleted list, with each product on its own line.
-    6. If no products are found, respond with a friendly message saying you couldn't find any matches, and maybe suggest checking the spelling or trying a different search term.
-    7. If you have a variety of matches, introduce them and then list them out using Markdown bullets. For example:
-       "We have several milk options available! Here's what we found:
-       - Whole milk ($350)
-       - Skim milk ($300)
-       - Chocolate milk ($400)
-       - Cashew milk ($450)"
-    8. At the end of your response, ask the user if they would like to add any of the found products to their cart.
-
-    OUTPUT FORMAT (JSON only, no other text):
-    {{
-        "message": "A friendly message to show the user",
-        "products": [
-            {{
-                "product_name": "exact name from inventory",
-                "quantity": available quantity,
-                "price": price
-            }}
-        ],
-        "action_ready": true/false  // true if these products can be added to cart directly
-    }}
-
+    1. Acknowledge that we don't have the product they searched for
+    2. Suggest the similar products we found (if any)
+    3. Offer helpful alternatives (e.g., "We have fresh apples, apple juice, or apple sauce")
+    4. Give them suggestions on what to try next
+    5. Be friendly and helpful, not apologetic
+    6. Use plain text formatting only
+    
     EXAMPLES:
     
-    User searched: "apple sauce"
-    Inventory: [Apple Sauce, Unsweetened Applesauce, Apple Juice]
+    User searched: "xyz123"
+    → "We don't currently have xyz123 in stock. Did you mean apple juice? 
+         We have several options like Fresh Apple, Apple Juice, or Apple Sauce. 
+         Would you like to search for any of these?"
+    
+    User searched: "rare ingredient"
+    → "We don't have rare ingredient in stock right now. However, we have similar products 
+         like Ingredient Option 1, Ingredient Option 2, or Ingredient Option 3. 
+         Feel free to try searching for one of these, or let me know what else you need!"
+    
+    OUTPUT (JSON only):
     {{
-        "message": "We have a few apple sauce options in stock:\\n- Apple Sauce ($150)\\n- Unsweetened Applesauce ($120)\\n\\nWould you like to add either of these to your cart?",
-        "products": [
-            {{"product_name": "Apple Sauce", "quantity": 25, "price": 150}},
-            {{"product_name": "Unsweetened Applesauce", "quantity": 10, "price": 120}}
-        ],
-        "action_ready": true
+        "message": "Your helpful fallback message here"
     }}
+    """
     
-    User searched: "ackee"
-    Inventory: [Ackee - Canned, Ackee - Frozen, Blackberries - Fresh]
-    {{
-        "message": "We have ackee available! We've got:\\n- Canned Ackee ($450)\\n- Frozen Ackee ($550)\\n\\nWould you like to add either of these to your cart?",
-        "products": [
-            {{"product_name": "Ackee - Canned", "quantity": 35, "price": 450}},
-            {{"product_name": "Ackee - Frozen", "quantity": 20, "price": 550}}
-        ],
-        "action_ready": true
-    }}
-    
-    Now process the user's search.
-    """.format(user_message=user_message, product_to_find=product_to_find, context=context)
-    
-    return inventory_prompt
+    try:
+        from services.user_intent_executive import message_to_llm
+        response = await message_to_llm(fallback_prompt, product_name, [])
+        parsed = json.loads(response)
+        return parsed.get("message", get_default_fallback_message(product_name))
+    except Exception as e:
+        logger.error(f"[FALLBACK] Error generating fallback: {e}")
+        return get_default_fallback_message(product_name)
 
-# Add to cart logic that will be used in the llm_route to add items to the cart based on the user's message 
-# and the detected intent.
+
+# ========== HELPER: Default fallback message ==========
+def get_default_fallback_message(product_name: str) -> str:
+    """
+    Return a default fallback message when LLM generation fails.
+    
+    Safe fallback that always works.
+    """
+    
+    similar = find_similar_products(product_name, max_results=2)
+    
+    base_message = f"We don't currently have {product_name} in stock."
+    
+    if similar:
+        suggestions = ", ".join([p["product_name"] for p in similar])
+        return f"{base_message} Did you mean one of these? {suggestions}. Would you like to add any of these to your cart instead?"
+    
+    return (
+        f"{base_message} "
+        f"Would you like to search for something else, or would you like me to suggest some popular items?"
+    )
+
+
+# ========== HELPER: Find similar products ==========
+def find_similar_products(
+    search_term: str,
+    max_results: int = 3,
+    threshold: int = 60
+) -> List[Dict]:
+    """
+    Find products similar to the search term for fallback suggestions.
+    
+    Uses fuzzy matching to find related products.
+    
+    Args:
+        search_term: Product to search for
+        max_results: Max similar products to return
+        threshold: Minimum fuzzy match score (0-100)
+    
+    Returns:
+        List of similar products with match scores
+    """
+    
+    search_lower = search_term.lower()
+    similar = []
+    
+    for _, row in inventory_df.iterrows():
+        product_name = row.get("product_name", "").lower()
+        
+        # Skip exact match (we already know this wasn't found)
+        if product_name == search_lower:
+            continue
+        
+        # Calculate similarity score
+        fuzzy_score = fuzz.ratio(search_lower, product_name)
+        partial_score = fuzz.partial_ratio(search_lower, product_name)
+        combined_score = (fuzzy_score * 0.6) + (partial_score * 0.4)
+        
+        # Include if above threshold
+        if combined_score >= threshold:
+            similar.append({
+                "product_name": row.get("product_name"),
+                "match_score": round(combined_score, 1),
+                "quantity": row.get("quantity", 0),
+                "price": row.get("price", 0)
+            })
+    
+    # Sort by match score and return top N
+    similar.sort(key=lambda x: x["match_score"], reverse=True)
+    return similar[:max_results]
+
+
+# ========== HELPER: Format similar products for prompt ==========
+def format_similar_products(products: List[Dict]) -> str:
+    """
+    Format similar products for display in fallback message.
+    """
+    
+    if not products:
+        return "(No similar products found)"
+    
+    formatted = []
+    for i, p in enumerate(products, 1):
+        name = p.get("product_name", "Unknown")
+        score = p.get("match_score", 0)
+        formatted.append(f"• {name} (Match: {score}%)")
+    
+    return "\n".join(formatted)
+
+
+# ========== HELPER: Format product message ==========
+def format_product_message(products: Union[Dict, List[Dict]]) -> str:
+    """
+    Format products for user display.
+    """
+    
+    if not products:
+        return "No products available"
+    
+    # Handle single product
+    if isinstance(products, dict):
+        products = [products]
+    
+    if len(products) == 1:
+        p = products[0]
+        return f"We have {p.get('product_name')} in stock (${p.get('price')}). Would you like to add it to your cart?"
+    
+    # Handle multiple products
+    product_list = []
+    for p in products:
+        product_list.append(f"• {p.get('product_name')} (Quantity: {p.get('quantity')}, Price: ${p.get('price')})")
+    
+    return f"We have several options for you:\n" + "\n".join(product_list) + "\n\nWould you like to add any of these to your cart?"
 
 async def prepare_cart_response(entities: Entity, user_message: str, user_id: str):
     """
@@ -594,58 +844,13 @@ Location Details: {aisle_info['location_details']}
 
 # Prepare store info response
 
-async def prepare_store_info_response(entities, user_message: str) -> str:
-    """
-    Prepare system prompt for store info queries.
-    User asks: "What are your store hours?" or "Where is the pharmacy?"
-    """
-    from intents.store_info import get_store_info
-    
-    store_info = get_store_info()
-    
-    context = f"""
-Store Information:
-- Name: {store_info['name']}
-- Address: {store_info['address']}
-- Phone: {store_info['phone']}
-- Hours: {store_info['hours']}
-- Departments: {', '.join(store_info['departments'])}
-"""
-    
-    system_prompt = f"""
-    You are a friendly and helpful UCC Supermarket store assistant.
-    A customer is asking for information about the store.
-    
-    Customer question: "{user_message}"
-    
-    Store information:
-    {context}
-    
-    INSTRUCTIONS:
-    - Be warm and friendly
-    - Provide clear, concise answers
-    - Mention store name, address, phone, hours, and departments
-    - Keep response short and natural
-    - Do NOT use lists or bullet points
-    
-    OUTPUT FORMAT (JSON only):
-    {{
-        "message": "Your friendly response here. For example: 'Welcome to UCC Supermarket! We're located at 123 Main Street and are open Monday-Saturday from 8am-9pm.
-         You can reach us at 555-1234. We have departments like produce, dairy, meat, and a pharmacy.
-         Let me know if you need anything else!'",
-        "action_ready": false
-    }}
-    """
-    
-    return system_prompt
-
-
 
 
 async def prepare_add_inventory_to_cart_response(product_names: List[str], user_message: str) -> str:
     """
     Prepare response for adding inventory items to cart.
     """
+    import json
     if not product_names:
         return json.dumps({"message": "No products selected. Which product would you like to add?"})
     
@@ -669,3 +874,38 @@ async def prepare_add_inventory_to_cart_response(product_names: List[str], user_
         "action_ready": true
     }}
     """
+    return inventory_prompt
+
+
+async def prepare_inventory_selection_response(user_message: str, options: list):
+    """
+    LLM prompt to extract the exact selection from a list of options.
+    Handles typos, ordinals, and descriptions.
+    """
+    options_str = "\n".join([f"- {opt}" for opt in options])
+    
+    prompt = f"""
+    You are an expert intent extraction engine for a supermarket.
+    The user is trying to select an item from a list of previously suggested options.
+    
+    USER MESSAGE: "{user_message}"
+    
+    SUGGESTED OPTIONS:
+    {options_str}
+    
+    YOUR TASKS:
+    1. Identify which option the user is selecting.
+    2. Handle minor typos (e.g., "oxtial" -> "Oxtail").
+    3. Handle ordinal references (e.g., "the first one", "the second", "1st").
+    4. Handle descriptive references (e.g., "the fresh one", "the boneless one").
+    5. Match the user's intent to the EXACT name from the SUGGESTED OPTIONS list.
+    6. If the user message is generic (e.g., "yes please", "sure"), and there is only one logical option, pick it.
+    7. If multiple products match or it's genuinely ambiguous, return null.
+    8. If it's a "no" or rejection, return null.
+    
+    OUTPUT FORMAT (JSON only):
+    {{
+        "selected_inventory": "exact_name_from_options_or_None",
+    }}
+    """
+    return prompt

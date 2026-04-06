@@ -13,6 +13,8 @@ import time
 import os
 from dotenv import load_dotenv
 from services.context_handler import get_user_state
+from intents.recommend_recipe import is_recipe_selection
+
 
 load_dotenv()
 
@@ -27,7 +29,11 @@ DEEPSEEK_MODEL   = "deepseek-chat"
 OLLAMA_URL       = "http://localhost:11434/api/generate"
 OLLAMA_MODEL     = "qwen2.5:1.5b"
 
-USE_DEEPSEEK     = True   # flip to False to force local Ollama
+GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "your-gemini-api-key-here")
+GEMINI_URL       = "https://generativelanguage.googleapis.com/v1beta2/models/gemini-2.5-pro:generateContent"
+GEMINI_MODEL     = "gemini-2.5-pro"
+
+USE_DEEPSEEK     = True 
 
 
 # ─────────────────────────────────────────────
@@ -72,23 +78,34 @@ async def call_deepseek(system_prompt: str, user_message: str, chat_history: lis
 async def call_ollama(system_prompt: str, user_message: str, chat_history: list = []) -> str:
     """Local Ollama fallback — slower but works offline."""
     custom_timeout = httpx.Timeout(160.0, connect=60.0)
-    
+
+    # --- FIX 1: DEFENSIVE PROGRAMMING ---
+    # Ensure these are strings even if the caller passes None by mistake
+    safe_system_prompt = system_prompt if system_prompt is not None else ""
+    safe_user_message = user_message if user_message is not None else ""
+
     # Construct prompt from history for Ollama
     history_str = ""
-    for msg in chat_history:
-        role = "User" if msg["role"] == "user" else "Assistant"
-        history_str += f"\n{role}: {msg['content']}"
+    if chat_history: # Ensure chat_history isn't None either
+        for msg in chat_history:
+            # Safely get content, default to empty string if missing
+            content = msg.get('content', '')
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            history_str += f"\n{role}: {content}"
+
+    # --- FIX 2: SAFER STRING BUILDING ---
+    full_prompt = f"{safe_system_prompt}{history_str}\nUser: {safe_user_message}"
 
     payload = {
         "model": OLLAMA_MODEL,
-        "prompt": system_prompt + history_str + "\nUser: " + user_message,
+        "prompt": full_prompt,
         "stream": False,
         "format": "json",
         "keep_alive": -1,
         "options": {
             "num_predict": 1500,
             "temperature": 0.1,
-            "num_ctx": 2048,
+            "num_ctx": 4096, # Increased context slightly for larger histories
             "top_k": 10,
             "top_p": 0.5,
             "repeat_penalty": 1.0,
@@ -96,19 +113,20 @@ async def call_ollama(system_prompt: str, user_message: str, chat_history: list 
     }
 
     async with httpx.AsyncClient(timeout=custom_timeout) as client:
-        start = time.perf_counter()
         try:
             response = await client.post(OLLAMA_URL, json=payload)
             response.raise_for_status()
             data = response.json()
-            #duration = time.perf_counter() - start
-            #tokens = data.get("eval_count", 0)
-            return data.get("response")
+            
+            # --- FIX 3: STRIP LLM WHITESPACE ---
+            llm_text = data.get("response", "")
+            return llm_text.strip() if llm_text else ""
+            
         except httpx.TimeoutException:
-            return "Error: The AI took too long to think."
+            return json.dumps({"message": "Error: The AI took too long to think.", "action_ready": False})
         except Exception as e:
-            return f"Error: {str(e)}"
-
+            print(f"[OLLAMA ERROR] {str(e)}") # Log it so you can see it in your terminal
+            return json.dumps({"message": f"Error: {str(e)}", "action_ready": False})
 
 # ─────────────────────────────────────────────
 #  UNIFIED LLM CALL
@@ -118,6 +136,7 @@ async def message_to_llm(system_prompt: str, user_message: str, chat_history: li
     """Try DeepSeek first, fall back to Ollama if it fails or is disabled."""
     if USE_DEEPSEEK:
         result = await call_deepseek(system_prompt, user_message, chat_history)
+        print(f"DeepSeek result: {result}")  # Debug log
         if result is not None:
             return result
     return await call_ollama(system_prompt, user_message, chat_history)
@@ -206,6 +225,7 @@ def fetch_intent():
         8. If user mentions products and intent is "recommend_recipe", list them in product_name.
         9. If the user's message is short (1-3 words) AND the last assistant message contained a list or asked a question, set intent to "follow_up".
         10. If the user says something like "yes", "sure", "ok", "no", or a single item name ("oxtail", "chicken"), and the previous assistant message was asking for selection, set intent to "follow_up".
+        11. If user says something vague like "what can i make" or asks for recipe suggestions without mentioning specific ingredients, set intent to "recipe_from_cart_items".
         OUTPUT FORMAT:
         {
             "intent": "intent_name",
@@ -279,12 +299,13 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 intent = "add_to_cart"
                 print(f"Overriding intent to add_to_cart based on conversation history.")
                 
-        # 2. Inventory check override
-        elif "which would you like to explore" in last_bot_msg or "which one interests you" in last_bot_msg or "from our list of" in last_bot_msg:
+        # 2. Inventory check override (Selection Focus)
+        elif any(phrase in last_bot_msg for phrase in ["which would you like to explore", "which one interests you", "from our list of", "which type", "refer to it by name or number"]):
             words = re.findall(r"\w+", user_message.lower())
-            if len(words) <= 5 and intent in ["general_chat", "stock_check", "add_to_cart"]:
+            # Broaden to 15 words to capture "the oxtails how much are they"
+            if len(words) <= 15 and intent in ["general_chat", "stock_check", "add_to_cart", "follow_up"]:
                 intent = "inventory_check"
-                print(f"Overriding intent to inventory_check based on conversation history.")
+                print(f"[OVERRIDE] Forcing intent to inventory_check for selection: '{user_message}'")
 
     # Fallback: treat direct shopping requests as stock checks when intent falls back to general chat.
     if intent == "general_chat":
@@ -307,26 +328,28 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
 
     # If the last intent was inventory check and the user message is short likely a selection 
     if last_intent in ["inventory_check", "stock_check", "recommend_recipe"]:
+        print(f"Check 1: [OVERRIDE] Changing intent from {intent} to follow_up based on conversation context")
         words = user_message.lower().split()
         # Short message (1-3 words) that's not a greeting
         if 1 <= len(words) <= 3 and not any(word in words for word in ["hi", "hello", "hey", "thanks"]):
             intent = "follow_up"
-            print(f"[OVERRIDE] Changing intent from {intent} to follow_up based on conversation context")
+            print(f"Check 2: [OVERRIDE] Changing intent from {intent} to follow_up based on conversation context")
 
     # Ensure the FINAL intent is saved so llm_route.py doesn't overwrite it with the raw LLM intent
     state["last_intent"] = intent
 
     match intent:
         case "stock_check":
-            #print("Stock check logic triggered.")
-            # Handled fully in Python — no LLM call needed
-            system_prompt = await prepare_stock_response(entities, user_message)
-
-            # Send the stock response to the llm to message to the user 
-            llm_response = await message_to_llm(system_prompt, " ", chat_history)
-
-            # Return the llm response
-            return llm_response
+            from services.llm_logic import search_product_with_fallback
+            
+            # Entities have already been extracted by llm_response_extraction
+            product_name = entities.product_name if entities.product_name else ""
+            
+            # Use the new fallback handler
+            dict_response = await search_product_with_fallback(user_id, product_name, entities, user_message)
+            
+            print(f"Fallback response for stock check: {dict_response}")
+            return json.dumps(dict_response)
 
         case "get_recipe":
             # Check if the intent is "get_recipe"
@@ -431,11 +454,12 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             return llm_response
         
         case "view_cart":
-            from services.llm_logic import prepare_view_cart_response
-            system_prompt = await prepare_view_cart_response(user_id)
-            llm_response = await message_to_llm(system_prompt, " ", chat_history)
-            
-            return llm_response
+            from intents.cart_logic import formatted_cart_summary
+            cart_message = formatted_cart_summary(user_id)
+            return json.dumps({
+                "message": cart_message,
+                "action_ready": False
+            })
         case "check_recipe_availability":
             # Handle recipe availability
             system_prompt = await prepare_check_recipe_availability_response(entities, user_message)
@@ -445,6 +469,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             return llm_response
         
         case "recommend_recipe":
+            # Check if user just checked their cart and asking 
             system_prompt = await prepare_recommend_recipe_response(entities, user_message)
             llm_response  = await message_to_llm(system_prompt, " ", chat_history)
 
@@ -487,9 +512,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
 
             return llm_response
 
-        case "checkout":
-            from intents.checkout import checkout, prepare_checkout_response
-            
+        case "checkout":            
             return json.dumps({"message": "Sure! Heres your checkout link when youre ready to checkout. \n https://localhost:3000/checkout",
                                'action': 'redirect_to_checkout',
                                'redirect_url': '/checkout'})
@@ -527,12 +550,91 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             print(f"[INVENTORY] last_intent: {state.get('last_intent')}")
             print(f"[INVENTORY] has subcategories: {bool(state.get('last_subcategories'))}")
             print(f"[INVENTORY] has products: {bool(state.get('last_inventory_products'))}")
+
+            # Fall back llm search category prompt
+            fall_back_prompt = f"""
+                    You are a strict classification system for a supermarket inventory.
+
+                    Your job is to map a user's query to ONE category.
+
+                    You already have a keyword system. Use similar reasoning, but handle:
+                    - vague language
+                    - misspellings
+                    - informal speech (including Patois)
+
+                    USER INPUT:
+                    {user_message}
+
+                    VALID CATEGORIES (choose ONLY one):
+                    - International Foods
+                    - Condiments & Sauces
+                    - Beverages
+                    - Baking Supplies
+                    - Vinegar
+                    - Canned & Jarred
+                    - Grains & Rice
+                    - Snacks
+                    - Sugar & Sweeteners
+                    - Produce
+                    - Fruits
+                    - Bakery
+                    - Spices & Seasonings
+                    - Household
+                    - Meat & Poultry
+                    - Frozen Foods
+                    - Dry Goods
+                    - Dairy & Eggs
+                    - Breakfast
+                    - Nuts & Seeds
+                    - Prepared Foods
+                    - Seafood
+                    - Health Foods
+                    - Pet Supplies
+                    - Meal Kits
+                    - Tobacco
+                    - Specialty
+                    - Other
+
+                    RULES:
+                    - Return ONLY one category from the list
+                    - If unsure, return "Other"
+                    - Do NOT explain anything
+                    - Do NOT return anything except JSON
+
+                    OUTPUT:
+                    {{
+                        "category": "<one category from the list>"
+                    }}
+                    """
+
+            # STEP 1 & 2: LLM-based selection for Products or Subcategories
+            last_products = state.get("last_inventory_products", [])
+            last_subs = state.get("last_subcategories", [])
             
-            # STEP 1: Check if user is selecting a SPECIFIC PRODUCT (after drill-down to products)
-            if state.get("last_inventory_products") and is_product_selection(user_message, user_id):
-                selected_products = get_selected_products(user_message, user_id)
+            selection_made = None
+            
+            if last_products:
+                # Use LLM to extract product selection
+                from services.llm_logic import prepare_inventory_selection_response
+                options = [p['product_name'] for p in last_products]
+                print("Building product selection prompt for LLM...")
+                prompt = await prepare_inventory_selection_response(user_message, options)
+                print("Checking product selection with LLM...")
+                res_raw = await message_to_llm(prompt, user_message, chat_history)
+
+                print(f"[PROMPT]: {prompt}")
+                print(f"[RESPONSE]: {res_raw}")
+            
+
+                try:
+                    res_json = json.loads(res_raw)
+                    selection_made = res_json.get("selected_inventory")
+                except:
+                    selection_made = None
                 
-                if selected_products:
+                if selection_made and selection_made != "null":
+                    selected_products = [selection_made]
+                    
                     # Check if user explicitly wants to add to cart
                     add_keywords = ["add", "put", "buy", "cart", "purchase", "get", "want", "ill take", "ill get"]
                     wants_to_add = any(kw in user_message.lower() for kw in add_keywords)
@@ -569,68 +671,87 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                             "product_names": selected_products,
                             "action_ready": False
                         })
+
+            # Subcategory selection
+            if is_subcategory_selection(user_message, user_id):
+                selected_subcategory = get_selected_subcategory(user_message)
+                print(f"[INVENTORY] Subcategory selection detected (user): '{selected_subcategory}'")
+                selection_made = selected_subcategory
+
             
-            # STEP 2: Check if user is selecting a SUBCATEGORY (e.g., "oxtail" after seeing meat types)
-            elif state.get("last_subcategories") and is_subcategory_selection(user_message, user_id):
-                selected_subcategory = get_selected_subcategory(user_message, user_id)
-                last_category = state.get("last_category")
+            # Subcategory selection
+            if not selection_made and last_subs:
+                from services.llm_logic import prepare_inventory_selection_response
+                options = [s['subcategory'] for s in last_subs]
+                prompt = await prepare_inventory_selection_response(user_message, options)
+                res_raw = await message_to_llm(prompt, user_message, chat_history)
                 
-                print(f"[INVENTORY] Subcategory selection detected: '{selected_subcategory}' in category '{last_category}'")
-                
-                if selected_subcategory and last_category:
-                    # Get all products in this subcategory
-                    products = get_products_by_subcategory(last_category, selected_subcategory)
+                try:
+                    res_json = json.loads(res_raw)
+                    selection_made = res_json.get("selected_inventory")
+                except:
+                    selection_made = None
                     
-                    if products:
-                        # Store products in state for next turn
-                        state["last_inventory_products"] = products
+                if selection_made and selection_made != "null":
+                    selected_subcategory = selection_made
+                    last_category = state.get("last_category")
+                    
+                    print(f"[INVENTORY] Subcategory selection detected (LLM): '{selected_subcategory}' in category '{last_category}'")
+                    
+                    if last_category:
+                        # Get all products in this subcategory
+                        products = get_products_by_subcategory(last_category, selected_subcategory)
                         
-                        # SAVE PRODUCTS to the session pool so add_to_cart logic can find them
-                        from services.llm_response import save_products
-                        save_products(user_id, products)
-                        
-                        # Build product list for LLM response
-                        product_list = ""
-                        for p in products[:10]:  # Limit to first 10 for display
-                            stock = "✅" if p.get('in_stock', True) else "❌"
-                            product_list += f"\n• {p['product_name']} — ${p['price']} {stock}"
-                        
-                        if len(products) > 10:
-                            product_list += f"\n• ... and {len(products) - 10} more items"
-                        
-                        # Create system prompt for LLM to format response
-                        system_prompt = f"""
-                        You are a helpful UCC Supermarket assistant.
-                        User asked about {selected_subcategory} in {last_category}.
-                        
-                        Available products:
-                        {product_list}
-                        
-                        INSTRUCTIONS:
-                        - List the products conversationally (NOT as bullet points in your response)
-                        - Mention prices
-                        - If there are many products, summarize the range
-                        - Ask which specific product they want or suggest "the first one", "the second one"
-                        - Be friendly and helpful
-                        
-                        OUTPUT (JSON only):
-                        {{
-                            "message": "Your conversational response here",
-                            "subcategory": "{selected_subcategory}",
-                            "products_found": {len(products)},
-                            "products": {json.dumps(products[:10])},
-                            "action_ready": false
-                        }}
-                        """
-                        
-                        llm_response = await message_to_llm(system_prompt, " ", chat_history)
-                        return llm_response
-                    else:
-                        # No products found in this subcategory
-                        return json.dumps({
-                            "message": f"I'm sorry, we don't have any {selected_subcategory} in stock right now. Would you like to see something else from {last_category}?",
-                            "action_ready": False
-                        })
+                        if products:
+                            # Store products in state for next turn
+                            state["last_inventory_products"] = products
+                            
+                            # SAVE PRODUCTS to the session pool so add_to_cart logic can find them
+                            from services.llm_response import save_products
+                            save_products(user_id, products)
+                            
+                            # Build product list for LLM response
+                            product_list = ""
+                            for p in products[:10]:  # Limit to first 10 for display
+                                stock = "✅" if p.get('in_stock', True) else "❌"
+                                product_list += f"\n• {p['product_name']} — ${p['price']} {stock}"
+                            
+                            if len(products) > 10:
+                                product_list += f"\n• ... and {len(products) - 10} more items"
+                            
+                            # Create system prompt for LLM to format response
+                            system_prompt = f"""
+                            You are a helpful UCC Supermarket assistant.
+                            User asked about {selected_subcategory} in {last_category}.
+                            
+                            Available products:
+                            {product_list}
+                            
+                            INSTRUCTIONS:
+                            - List the products conversationally (NOT as bullet points in your response)
+                            - Mention prices
+                            - If there are many products, summarize the range
+                            - Ask which specific product they want or suggest "the first one", "the second one"
+                            - Be friendly and helpful
+                            
+                            OUTPUT (JSON only):
+                            {{
+                                "message": "Your conversational response here",
+                                "subcategory": "{selected_subcategory}",
+                                "products_found": {len(products)},
+                                "products": {json.dumps(products[:10])},
+                                "action_ready": false
+                            }}
+                            """
+                            
+                            llm_response = await message_to_llm(system_prompt, " ", chat_history)
+                            return llm_response
+                        else:
+                            # No products found in this subcategory
+                            return json.dumps({
+                                "message": f"I'm sorry, we don't have any {selected_subcategory} in stock right now. Would you like to see something else from {last_category}?",
+                                "action_ready": False
+                            })
             
             # STEP 3: Check if user wants to ADD a previously selected product (affirmation case)
             elif state.get("pending_selection") and is_confirm(user_message) == "yes":
@@ -674,76 +795,142 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 # Extract category from user message or use existing category context
                 from intents.stock_check import extract_category_from_query, get_subcategories_in_category
                 
-                category = extract_category_from_query(user_message)
+                category, success = extract_category_from_query(user_message)
+
+                print(f"Initial inventory check. Detected category: '{category}'")
+
                 
                 # If no category detected, ask user to specify
-                if not category:
-                    system_prompt = """
+                if category:
+                    # Get subcategories for this category
+                    subcategories = get_subcategories_in_category(category)
+                    
+                    if not subcategories:
+                        return json.dumps({
+                            "message": f"Sorry, we don't currently have any items in {category}. Would you like to browse another category?",
+                            "action_ready": False
+                        })
+                    
+                    # Store subcategories for next turn
+                    state["last_subcategories"] = subcategories
+                    state["last_category"] = category
+                    state["last_inventory_products"] = []  # Clear any previous products
+                    state["pending_selection"] = []  # Clear any pending selections
+                    
+                    # Build subcategory list for LLM
+                    subcategory_list = ""
+                    for i, sub in enumerate(subcategories[:15], 1):
+                        subcategory_list += f"\n• {sub['subcategory']} ({sub['count']} items)"
+                    
+                    if len(subcategories) > 15:
+                        subcategory_list += f"\n• ... and {len(subcategories) - 15} more types"
+                    
+                    # Create system prompt for LLM to format response
+                    system_prompt = f"""
                     You are a helpful UCC Supermarket assistant.
-                    User asked about inventory but didn't specify a category.
+                    User asked: "{user_message}"
+                    
+                    Available subcategories in {category}:
+                    {subcategory_list}
                     
                     INSTRUCTIONS:
-                    - Ask them to specify a category (Meat & Poultry, Seafood, Produce, Dairy, Bakery, etc.)
+                    - List the types conversationally (NOT as bullet points in your response)
+                    - Make it feel natural, not robotic
+                    - Ask which type they want to explore
+                    - Suggest they can say the name or "the first one", "the second one"
                     - Be friendly and helpful
                     
                     OUTPUT (JSON only):
-                    {
-                        "message": "I'd be happy to help you browse! What category are you interested in? We have Meat & Poultry, Seafood, Produce, Dairy, Bakery, and more. What would you like to see?",
+                    {{
+                        "message": "Your conversational response here",
+                        "category": "{category}",
+                        "subcategories_count": {len(subcategories)},
                         "action_ready": false
-                    }
+                    }}
                     """
+                    
                     llm_response = await message_to_llm(system_prompt, " ", chat_history)
                     return llm_response
+                elif success == False:
+
+                    category_response = await message_to_llm(fall_back_prompt, user_message, chat_history)
+
+                    # Extract category from LLM response
+                    category = json.loads(category_response).get("category")
+                    print(f"LLM fallback category detection: '{category}'")
+
+                    if category == "Other":
+                        return json.dumps({
+                            "message": "I'm sorry, I couldn't determine a specific category from your request."
+                            " Could you please specify if you're looking for something like 'fruits', 'snacks', 'beverages', etc.?",
+                            "action_ready": False
+                        })
+                    
+                    print(f"Initial inventory check. Detected category: '{category}'")
+
                 
-                # Get subcategories for this category
-                subcategories = get_subcategories_in_category(category)
-                
-                if not subcategories:
+                    # If no category detected, ask user to specify
+                    if category:
+
+                        # Get subcategories for this category
+                        subcategories = get_subcategories_in_category(category)
+                        
+                        if not subcategories:
+                            return json.dumps({
+                                "message": f"Sorry, we don't currently have any items in {category}. Would you like to browse another category?",
+                                "action_ready": False
+                            })
+                        
+                        # Store subcategories for next turn
+                        state["last_subcategories"] = subcategories
+                        state["last_category"] = category
+                        state["last_inventory_products"] = []  # Clear any previous products
+                        state["pending_selection"] = []  # Clear any pending selections
+                        
+                        # Build subcategory list for LLM
+                        subcategory_list = ""
+                        for i, sub in enumerate(subcategories[:15], 1):
+                            subcategory_list += f"\n• {sub['subcategory']} ({sub['count']} items)"
+                        
+                        if len(subcategories) > 15:
+                            subcategory_list += f"\n• ... and {len(subcategories) - 15} more types"
+                        
+
+                        # Create system prompt for LLM to format response
+                        system_prompt = f"""
+                        You are a helpful UCC Supermarket assistant.
+                        User asked: "{user_message}"
+                        
+                        Available subcategories in {category}:
+                        {subcategory_list}
+                        
+                        INSTRUCTIONS:
+                        - List the types conversationally (NOT as bullet points in your response)
+                        - Make it feel natural, not robotic
+                        - Ask which type they want to explore
+                        - Suggest they can say the name or "the first one", "the second one"
+                        - Be friendly and helpful
+                        
+                        OUTPUT (JSON only):
+                        {{
+                            "message": "Your conversational response here",
+                            "category": "{category}",
+                            "subcategories_count": {len(subcategories)},
+                            "action_ready": false
+                        }}
+                        """
+                        # Update user state with the newly detected category even if it came from LLM fallback
+                        state["last_category"] = category
+
+                    llm_response = await message_to_llm(system_prompt, " ", chat_history)
+                    return llm_response
+                    
+                else:
                     return json.dumps({
-                        "message": f"Sorry, we don't currently have any items in {category}. Would you like to browse another category?",
-                        "action_ready": false
+                        "message": "I'm sorry, It seems like we dont have that category in our store."
+                        " You can ask about a specific product in that category or choose another category to explore. (e.g., 'Do you have any fresh",
+                        "action_ready": False
                     })
-                
-                # Store subcategories for next turn
-                state["last_subcategories"] = subcategories
-                state["last_category"] = category
-                state["last_inventory_products"] = []  # Clear any previous products
-                state["pending_selection"] = []  # Clear any pending selections
-                
-                # Build subcategory list for LLM
-                subcategory_list = ""
-                for i, sub in enumerate(subcategories[:15], 1):
-                    subcategory_list += f"\n• {sub['subcategory']} ({sub['count']} items)"
-                
-                if len(subcategories) > 15:
-                    subcategory_list += f"\n• ... and {len(subcategories) - 15} more types"
-                
-                # Create system prompt for LLM to format response
-                system_prompt = f"""
-                You are a helpful UCC Supermarket assistant.
-                User asked: "{user_message}"
-                
-                Available subcategories in {category}:
-                {subcategory_list}
-                
-                INSTRUCTIONS:
-                - List the types conversationally (NOT as bullet points in your response)
-                - Make it feel natural, not robotic
-                - Ask which type they want to explore
-                - Suggest they can say the name or "the first one", "the second one"
-                - Be friendly and helpful
-                
-                OUTPUT (JSON only):
-                {{
-                    "message": "Your conversational response here",
-                    "category": "{category}",
-                    "subcategories_count": {len(subcategories)},
-                    "action_ready": false
-                }}
-                """
-                
-                llm_response = await message_to_llm(system_prompt, " ", chat_history)
-                return llm_response
                 
         case "general_chat":
             from intents.terms_and_conditions import prepare_general_chat_response
@@ -759,37 +946,96 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 is_subcategory_selection,
                 get_selected_subcategory,
                 is_product_selection,
-                get_selected_products
+                get_selected_products,
+                check_and_update_product_selection
             )
             from services.context_handler import is_confirmation_response as is_confirm
             
             state = get_user_state(user_id)
             last_intent = state.get("last_intent")
-            last_category = state.get("last_category")
             last_subcategories = state.get("last_subcategories", [])
             last_products = state.get("last_inventory_products", [])
+            last_category = state.get("last_category")
+            recipe_name = state.get("last_recipe_name")
+            last_suggestions = state.get("last_suggestions")
+
             
             print(f"[FOLLOW_UP] last_intent: {last_intent}")
-            print(f"[FOLLOW_UP] user_message: {user_message}")
             print(f"[FOLLOW_UP] has subcategories: {bool(last_subcategories)}")
             print(f"[FOLLOW_UP] has products: {bool(last_products)}")
+            print(f"[FOLLOW_UP] last_category: {last_category}")
+            print(f"[FOLLOW_UP] last_recipe_name: {recipe_name}")
             
-            # CASE A: Following up on inventory check (subcategory selection)
-            if last_subcategories:
-                # Check if user is selecting a subcategory
-                if is_subcategory_selection(user_message, user_id):
-                    selected = get_selected_subcategory(user_message, user_id)
-                    if selected and last_category:
-                        products = get_products_by_subcategory(last_category, selected)
+            # CASE 1: User is selecting from SUBCATEGORIES (not products yet)
+            if last_subcategories and not last_products:
+                print("[FOLLOW_UP] CASE 1: Subcategory selection detected")
+                print(f"[FOLLOW_UP] Available subcategories: {[s['subcategory'] for s in last_subcategories]}")
+                from intents.stock_check import extract_subcategory_from_response, get_products_by_subcategory
+                from services.llm_response import save_products
+                
+                # ========== LAYER 1: TRY FAST MATCHING FIRST ==========
+                available_subcategories = [s['subcategory'] for s in last_subcategories]
+                user_subcategory_selection = extract_subcategory_from_response(user_message, available_subcategories)
+            
+                if user_subcategory_selection:
+                    print(f"[FOLLOW_UP] Fast match found: {user_subcategory_selection}")
+                    
+                    # Search for products in this subcategory
+                    user_product_selection = get_products_by_subcategory(last_category, user_subcategory_selection)
+
+                    print(f"[FOLLOW_UP] Products found for '{user_subcategory_selection}': {[p['product_name'] for p in user_product_selection]}")
+
+                    if user_product_selection:
+                        state["last_inventory_products"] = user_product_selection
+                        save_products(user_id, user_product_selection)
+            
+                        # Build response showing products
+                        product_list = ""
+                        for p in user_product_selection[:10]:
+                            stock = "✅" if p.get('in_stock', True) else "❌"
+                            product_list += f"\n• {p['product_name']} — ${p['price']} {stock}"
+                        
+                        
+                        # List the products to the user
+                        return json.dumps({
+                            "message": f"Here are the products we have in {user_subcategory_selection}:\n{product_list}\nWhich one would you like to explore?",
+                            "products": user_product_selection,
+                            "action_ready": True
+                        })  
+                    
+                    else:
+                        # Subcategory matched but no products found
+                        return json.dumps({
+                            "message": f"Sorry, we don't have any items in {user_subcategory_selection} right now.",
+                            "action_ready": False
+                        })
+            
+                # ========== LAYER 2: FALL BACK TO LLM IF FAST MATCH FAILED ==========
+                print("[FOLLOW_UP] Fast match failed, using LLM fallback")
+                from services.llm_logic import prepare_inventory_selection_response
+                
+                options = [s['subcategory'] for s in last_subcategories]
+                prompt = await prepare_inventory_selection_response(user_message, options)
+                res_raw = await message_to_llm(prompt, user_message, chat_history)
+                
+                try:
+                    res_json = json.loads(res_raw)
+                    selection_made = res_json.get("selected_inventory")
+                except:
+                    selection_made = None
+                
+                if selection_made and selection_made != "null":
+                    # ✅ LLM found a match → fetch its products
+                    print(f"[FOLLOW_UP] LLM match found: {selection_made}")
+                    
+                    if last_category:
+                        products = get_products_by_subcategory(last_category, selection_made)
+                        
                         if products:
-                            # Store products for next turn
                             state["last_inventory_products"] = products
-                            
-                            # SAVE PRODUCTS to pool
-                            from services.llm_response import save_products
                             save_products(user_id, products)
                             
-                            # Build product list
+                            # Build response showing products
                             product_list = ""
                             for p in products[:10]:
                                 stock = "✅" if p.get('in_stock', True) else "❌"
@@ -797,135 +1043,162 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                             
                             system_prompt = f"""
                             You are a helpful UCC Supermarket assistant.
-                            User selected "{selected}" from the {last_category} section.
+                            User selected "{selection_made}" from {last_category}.
                             
-                            Available products:
+                            Available products in {selection_made}:
                             {product_list}
                             
                             INSTRUCTIONS:
-                            - List the products conversationally
-                            - Mention prices
-                            - Ask which specific product they want
-                            - Suggest they can say the name or "the first one"
+                            - List products conversationally
+                            - Mention prices and stock status
+                            - Ask which product they'd like or suggest "the first one", "the second one"
+                            - Be friendly and helpful
                             
                             OUTPUT (JSON only):
                             {{
-                                "message": "Your conversational response here",
-                                "subcategory": "{selected}",
+                                "message": "Your response here",
+                                "subcategory": "{selection_made}",
                                 "products_found": {len(products)},
-                                "products": {json.dumps(products[:10])},
                                 "action_ready": false
                             }}
                             """
+                            
                             llm_response = await message_to_llm(system_prompt, " ", chat_history)
-                            return llm_response
+                            return llm_response  # ✅ EARLY RETURN
+                        
+                        else:
+                            # Subcategory matched but no products
+                            return json.dumps({
+                                "message": f"Sorry, we don't have any items in {selection_made} right now.",
+                                "action_ready": False
+                            })
+            
+                # ========== LAYER 3: NOTHING MATCHED - ASK FOR CLARIFICATION ==========
+                print("[FOLLOW_UP] No match found, asking for clarification")
+                return json.dumps({
+                    "message": f"I didn't catch that. Could you pick from: {', '.join([s['subcategory'] for s in last_subcategories[:5]])}?",
+                    "action_ready": False
+                })
+ 
+
+
+            # ✅ CASE 2: User is selecting from PRODUCTS (after subcategory was selected)
+            elif last_products:
+                print("[FOLLOW_UP] CASE 2: Product selection detected")
+                from services.llm_logic import prepare_inventory_selection_response
                 
-                # Check if user is saying "yes" to add previously selected items
-                elif is_confirm(user_message) == "yes" and state.get("pending_selection"):
+                options = [p['product_name'] for p in last_products]
+                prompt = await prepare_inventory_selection_response(user_message, options)
+                res_raw = await message_to_llm(prompt, user_message, chat_history)
+                
+                try:
+                    res_json = json.loads(res_raw)
+                    selection_made = res_json.get("selected_inventory")
+                except:
+                    selection_made = None
+                
+                if selection_made and selection_made != "null":
+                    # Product matched
+                    state["pending_selection"] = [selection_made]
+                    product = next((p for p in last_products if p['product_name'] == selection_made), None)
+                    
+                    if product:
+                        return json.dumps({
+                            "message": f"Great choice! {product['product_name']} is ${product['price']}. Would you like me to add it to your cart?",
+                            "product_names": [selection_made],
+                            "action_ready": False
+                        })
+                
+                # Check for "yes" confirmation
+                if is_confirm(user_message) == "yes" and state.get("pending_selection"):
                     selected = state.get("pending_selection", [])
+                    state["pending_selection"] = []
+                    
+                    product_details = []
+                    for name in selected:
+                        product = next((p for p in last_products if p['product_name'] == name), None)
+                        if product:
+                            product_details.append({
+                                "product_name": product['product_name'],
+                                "quantity": 1,
+                                "price": product['price']
+                            })
+                    
                     return json.dumps({
-                        "message": f"Great! I've added {', '.join(selected)} to your cart.",
-                        "added_products": [{"product_name": p, "quantity": 1, "price": 0} for p in selected],
+                        "message": f"Perfect! I've added {', '.join(selected)} to your cart.",
+                        "added_products": product_details,
                         "action_ready": True
                     })
                 
-                # Check if user wants to see specific product details
-                elif last_products and is_product_selection(user_message, user_id):
-                    selected_products = get_selected_products(user_message, user_id)
-                    if selected_products:
-                        product_info = ""
-                        for name in selected_products:
-                            product = next((p for p in last_products if p['product_name'] == name), None)
-                            if product:
-                                stock = "in stock" if product.get('in_stock', True) else "out of stock"
-                                product_info += f"\n• {product['product_name']} — ${product['price']} ({stock})"
-                        
-                        # Store as pending selection
-                        state["pending_selection"] = selected_products
-                        
-                        return json.dumps({
-                            "message": f"Great choice! {selected_products[0]} is ${next((p['price'] for p in last_products if p['product_name'] == selected_products[0]), 'available')}. Would you like me to add it to your cart?",
-                            "product_names": selected_products,
-                            "action_ready": False
-                        })
-                
-                # Fallback: user message wasn't recognized as selection
-                else:
-                    # Show subcategories again
-                    subcategory_list = ""
-                    for i, sub in enumerate(last_subcategories[:15], 1):
-                        subcategory_list += f"\n• {sub['subcategory']} ({sub['count']} items)"
-                    
-                    system_prompt = f"""
-                    You are a helpful UCC Supermarket assistant.
-                    User said: "{user_message}"
-                    
-                    Previously shown subcategories in {last_category}:
-                    {subcategory_list}
-                    
-                    INSTRUCTIONS:
-                    - Apologize that you didn't understand the selection
-                    - Remind them of the available options
-                    - Ask them to specify by name or number
-                    
-                    OUTPUT (JSON only):
-                    {{
-                        "message": "I'm sorry, I didn't catch which one you wanted. Here are the {last_category} options again: {', '.join([s['subcategory'] for s in last_subcategories[:10]])}. Which one would you like to explore?",
-                        "action_ready": false
-                    }}
-                    """
-                    llm_response = await message_to_llm(system_prompt, " ", chat_history)
-                    return llm_response
+                # No match for product
+                return json.dumps({
+                    "message": f"I didn't catch that. Could you pick from: {', '.join([p['product_name'] for p in last_products[:3]])}?",
+                    "action_ready": False
+                })
             
-            # CASE B: Following up on stock check (product selection)
-            elif last_intent == "stock_check" and state.get("last_inventory_products"):
-                if is_product_selection(user_message, user_id):
-                    selected = get_selected_products(user_message, user_id)
-                    if selected:
-                        state["pending_selection"] = selected
-                        return json.dumps({
-                            "message": f"Would you like me to add {', '.join(selected)} to your cart?",
-                            "product_names": selected,
-                            "action_ready": False
-                        })
-            
+
+
             # CASE C: Following up on recipe recommendations
-            elif last_intent in ["recommend_recipe", "get_recipe"] and state.get("last_suggestions"):
-                from services.context_handler import get_selected_recipe, fuzzy_match
+            elif last_intent in ["recommend_recipe", "recipe_from_cart_items", "get_recipe"] and last_suggestions:
+                print("[FOLLOW_UP] CASE A: Checking for recipe selection...")
                 
-                text = user_message.lower().strip()
-                suggestions = state.get("last_suggestions", [])
-                
-                # Check if user selected a recipe
-                selected_recipe = None
-                for recipe in suggestions:
-                    if fuzzy_match(text, recipe):
-                        selected_recipe = recipe
-                        break
-                
-                if not selected_recipe:
-                    # Check ordinal selection
-                    ordinals = {"first": 0, "second": 1, "third": 2, "1st": 0, "2nd": 1, "3rd": 2}
-                    for ordinal, index in ordinals.items():
-                        if ordinal in text and index < len(suggestions):
-                            selected_recipe = suggestions[index]
+                # Use the helper function to detect recipe selection
+                if is_recipe_selection(user_message, last_suggestions):
+                    print(f"[FOLLOW_UP] Recipe selection detected!")
+                    
+                    from services.context_handler import fuzzy_match
+                    
+                    text = user_message.lower().strip()
+                    
+                    # Try to find the selected recipe
+                    selected_recipe = None
+                    
+                    # Method 1: Fuzzy match against suggestions
+                    for recipe in last_suggestions:
+                        if fuzzy_match(text, recipe):
+                            selected_recipe = recipe
+                            print(f"[FOLLOW_UP] Fuzzy match found: {recipe}")
                             break
-                
-                if selected_recipe:
-                    # Store selected recipe and trigger get_recipe
-                    state["selected_recipe"] = selected_recipe
-                    # Redirect to get_recipe with the selected recipe
-                    system_prompt = await prepare_get_recipe_response(
-                        Entity(recipe_name=selected_recipe), 
-                        f"Give me the recipe for {selected_recipe}"
-                    )
-                    llm_response = await message_to_llm(system_prompt, " ", chat_history)
-                    return llm_response
-            
-            # CASE D: General follow-up - let LLM handle with context
+                    
+                    # Method 2: Ordinal selection (first, second, etc.)
+                    if not selected_recipe:
+                        ordinals = {
+                            "first": 0, "1st": 0, "one": 0,
+                            "second": 1, "2nd": 1, "two": 1,
+                            "third": 2, "3rd": 2, "three": 2,
+                        }
+                        for ordinal, index in ordinals.items():
+                            if ordinal in text and index < len(last_suggestions):
+                                selected_recipe = last_suggestions[index]
+                                print(f"[FOLLOW_UP] Ordinal match found: {ordinal} → {selected_recipe}")
+                                break
+                    
+                    if selected_recipe:
+                        # User selected a recipe - get the full recipe
+                        print(f"[FOLLOW_UP] Getting full recipe for: {selected_recipe}")
+                        
+                        state["selected_recipe"] = selected_recipe
+                        
+                        # Call prepare_get_recipe_response to format the prompt                        
+                        system_prompt = await prepare_get_recipe_response(
+                            Entity(recipe_name=selected_recipe),
+                            f"Give me the full recipe for {selected_recipe}"
+                        )
+                        llm_response = await message_to_llm(system_prompt, " ", chat_history)
+                        return llm_response
+                    
+                    # If we detected recipe selection intent but couldn't find a match
+                    print("[FOLLOW_UP] Recipe selection detected but no recipe matched")
+                    return json.dumps({
+                        "message": f"I didn't quite catch which recipe you want. Could you pick from: {', '.join(last_suggestions[:3])}?",
+                        "action_ready": False
+                    })
+
+            # CASE E: General follow-up - let LLM handle with context
             else:
                 # Pass to general chat with full context
                 from intents.terms_and_conditions import prepare_general_chat_response
+                print("[FOLLOW_UP] CASE E: No specific follow-up detected, passing to general chat with context")
                 system_prompt = await prepare_general_chat_response(user_message)
                 
                 # Include the last few messages for context
