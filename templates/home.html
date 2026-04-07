@@ -117,7 +117,9 @@
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-decoration: none;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .btn-primary {
@@ -518,23 +520,107 @@
     display: inline-block;
     background: #ffe0e0;
     color: #c00;
-    padding: 4px 12px;
+    padding: 6px 12px;
     border-radius: 20px;
     font-size: 0.85rem;
     margin-top: 10px;
+    gap: 6px;
   }
 
   .solution-badge {
     display: inline-block;
     background: #e0ffe0;
     color: #060;
-    padding: 4px 12px;
+    padding: 6px 12px;
     border-radius: 20px;
     font-size: 0.85rem;
     margin-left: 8px;
+    gap: 6px;
   }
 
-  /* ===== SECTION 6: TESTING & METRICS ===== */
+  .challenge-badge i, .solution-badge i {
+    margin-right: 4px;
+  }
+
+  /* ===== SECTION 6: FUTURE UPGRADES ===== */
+  .future-section {
+    padding: 100px 20px;
+    background: white;
+  }
+
+  .upgrades-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 25px;
+    margin-top: 50px;
+  }
+
+  .upgrade-card {
+    background: linear-gradient(135deg, #667eea08 0%, #764ba208 100%);
+    border: 1px solid #e0e0ff;
+    border-radius: 16px;
+    padding: 30px 25px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .upgrade-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s;
+  }
+
+  .upgrade-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 15px 40px rgba(102, 126, 234, 0.15);
+    border-color: #667eea;
+  }
+
+  .upgrade-card:hover::before {
+    transform: scaleX(1);
+  }
+
+  .upgrade-icon {
+    font-size: 2.2rem;
+    color: #667eea;
+    display: block;
+  }
+
+  .upgrade-card h3 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #1a1a2e;
+  }
+
+  .upgrade-card p {
+    color: #666;
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .upgrade-badge {
+    display: inline-block;
+    background: var(--gradient-accent);
+    color: white;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    align-self: flex-start;
+  }
+
+  /* ===== SECTION 7: TESTING & METRICS ===== */
   .testing-section {
     padding: 100px 20px;
     background: white;
@@ -632,6 +718,7 @@
     justify-content: center;
     font-weight: 700;
     color: white;
+    font-size: 0.9rem;
   }
 
   .result-status.pass {
@@ -714,17 +801,17 @@
   <!-- SECTION 1: HERO LANDING -->
   <section class="hero-section">
     <div class="hero-content">
-      <div class="hero-badge">🚀 AI-Powered Shopping Assistant</div>
+      <div class="hero-badge"><i class="fas fa-rocket"></i> AI-Powered Shopping Assistant</div>
       <h1 class="hero-title">Smart Shopping, Simplified</h1>
       <p class="hero-subtitle">
         Your personal AI shopping assistant that understands your needs, suggests products, and builds your cart—all through natural conversation.
       </p>
       <div class="hero-cta-group">
         <button class="btn-primary btn-large" onclick="document.getElementById('chatContainer').classList.remove('hidden'); document.getElementById('chatbotCta').classList.add('hidden');">
-          Start Shopping Now
+          <i class="fas fa-shopping-cart"></i> Start Shopping Now
         </button>
         <button class="btn-secondary btn-large" onclick="document.getElementById('chatContainer').classList.remove('hidden'); document.getElementById('chatbotCta').classList.add('hidden');">
-          Take a Tour
+          <i class="fas fa-play-circle"></i> Take a Tour
         </button>
       </div>
     </div>
@@ -734,7 +821,7 @@
   <section class="interactive-section">
     <div class="section-container">
       <div class="section-header">
-        <div class="section-label">✨ Interactive Interface</div>
+        <div class="section-label"><i class="fas fa-star"></i> Interactive Interface</div>
         <h2 class="section-title">Chat with Your Shopping Assistant</h2>
         <p class="section-description">
           Experience the power of conversational AI designed specifically for hassle-free shopping
@@ -744,7 +831,7 @@
       <div class="chat-showcase">
         <div class="chat-features">
           <div class="feature-item">
-            <div class="feature-icon">💬</div>
+            <div class="feature-icon"><i class="fas fa-comments"></i></div>
             <div class="feature-content">
               <h3>Natural Conversation</h3>
               <p>Type naturally—ask for products, prices, or help planning your shopping</p>
@@ -752,7 +839,7 @@
           </div>
 
           <div class="feature-item">
-            <div class="feature-icon">📸</div>
+            <div class="feature-icon"><i class="fas fa-image"></i></div>
             <div class="feature-content">
               <h3>Upload Shopping Lists</h3>
               <p>Snap a photo of your handwritten list and let AI extract all items</p>
@@ -760,7 +847,7 @@
           </div>
 
           <div class="feature-item">
-            <div class="feature-icon">🛒</div>
+            <div class="feature-icon"><i class="fas fa-shopping-bag"></i></div>
             <div class="feature-content">
               <h3>Smart Cart Management</h3>
               <p>Add, remove, and adjust quantities directly through chat</p>
@@ -768,7 +855,7 @@
           </div>
 
           <div class="feature-item">
-            <div class="feature-icon">🍳</div>
+            <div class="feature-icon"><i class="fas fa-utensils"></i></div>
             <div class="feature-content">
               <h3>Recipe Suggestions</h3>
               <p>Get recipe ideas and automatically add all needed ingredients to cart</p>
@@ -779,7 +866,7 @@
         <div class="chat-demo">
           <div class="chat-message bot">Hey! I'm your shopping assistant. What can I help you find?</div>
           <div class="chat-message user">I need ingredients for pasta carbonara</div>
-          <div class="chat-message bot">Great choice! 🍝 I found these ingredients:<br>• Pasta (1kg)<br>• Bacon (200g)<br>• Eggs (6)<br>• Parmesan (200g)<br><br>Should I add these to your cart?</div>
+          <div class="chat-message bot">Great choice! <i class="fas fa-utensils"></i> I found these ingredients:<br>• Pasta (1kg)<br>• Bacon (200g)<br>• Eggs (6)<br>• Parmesan (200g)<br><br>Should I add these to your cart?</div>
           <div class="chat-message user">Yes, please! Make it extra bacon</div>
           <div class="chat-message bot">Perfect! Added to your cart. Anything else?</div>
         </div>
@@ -791,7 +878,7 @@
   <section class="domain-section">
     <div class="section-container">
       <div class="section-header">
-        <div class="section-label">🎯 Domain & Capabilities</div>
+        <div class="section-label"><i class="fas fa-bullseye"></i> Domain & Capabilities</div>
         <h2 class="section-title">E-Commerce Shopping Intelligence</h2>
         <p class="section-description">
           Built for the retail and grocery domain, our GPT excels at understanding customer needs
@@ -800,7 +887,7 @@
 
       <div class="cards-grid">
         <div class="card">
-          <span class="card-icon">📦</span>
+          <span class="card-icon"><i class="fas fa-box-open"></i></span>
           <h3 class="card-title">Product Discovery</h3>
           <p class="card-description">
             Intelligent search across thousands of products with natural language understanding. Find exactly what you need within seconds.
@@ -808,7 +895,7 @@
         </div>
 
         <div class="card">
-          <span class="card-icon">💰</span>
+          <span class="card-icon"><i class="fas fa-coins"></i></span>
           <h3 class="card-title">Price Optimization</h3>
           <p class="card-description">
             Smart recommendations considering budget, quality, and availability to maximize your shopping value.
@@ -816,7 +903,7 @@
         </div>
 
         <div class="card">
-          <span class="card-icon">🗣️</span>
+          <span class="card-icon"><i class="fas fa-headset"></i></span>
           <h3 class="card-title">Conversational Commerce</h3>
           <p class="card-description">
             Natural language processing that understands context, preferences, and special requests for personalized assistance.
@@ -824,7 +911,7 @@
         </div>
 
         <div class="card">
-          <span class="card-icon">🔄</span>
+          <span class="card-icon"><i class="fas fa-sync-alt"></i></span>
           <h3 class="card-title">Smart Reordering</h3>
           <p class="card-description">
             Remembers your preferences and past purchases to suggest reorders and help with recurring shopping needs.
@@ -832,7 +919,7 @@
         </div>
 
         <div class="card">
-          <span class="card-icon">📊</span>
+          <span class="card-icon"><i class="fas fa-chart-bar"></i></span>
           <h3 class="card-title">Inventory Awareness</h3>
           <p class="card-description">
             Provides real-time stock information and suggests alternatives when items are unavailable.
@@ -840,7 +927,7 @@
         </div>
 
         <div class="card">
-          <span class="card-icon">🎓</span>
+          <span class="card-icon"><i class="fas fa-graduation-cap"></i></span>
           <h3 class="card-title">Educational Insights</h3>
           <p class="card-description">
             Offers product information, nutritional details, and usage suggestions to make informed purchasing decisions.
@@ -854,7 +941,7 @@
   <section class="documentation-section">
     <div class="section-container">
       <div class="section-header">
-        <div class="section-label">📖 Documentation</div>
+        <div class="section-label"><i class="fas fa-book"></i> Documentation</div>
         <h2 class="section-title">How to Use Effectively</h2>
         <p class="section-description">
           Learn all the ways to get the most out of your shopping assistant
@@ -863,7 +950,7 @@
 
       <div class="docs-grid">
         <div class="doc-card">
-          <span class="doc-icon">🎤</span>
+          <span class="doc-icon"><i class="fas fa-keyboard"></i></span>
           <h3 class="doc-title">Text Commands</h3>
           <p class="doc-description">Type natural queries like "I need milk" or "Find pasta under $5"</p>
           <ul class="step-list">
@@ -874,7 +961,7 @@
         </div>
 
         <div class="doc-card">
-          <span class="doc-icon">📸</span>
+          <span class="doc-icon"><i class="fas fa-camera"></i></span>
           <h3 class="doc-title">Image Upload</h3>
           <p class="doc-description">Upload photos of handwritten shopping lists for automatic extraction</p>
           <ul class="step-list">
@@ -885,7 +972,7 @@
         </div>
 
         <div class="doc-card">
-          <span class="doc-icon">💾</span>
+          <span class="doc-icon"><i class="fas fa-save"></i></span>
           <h3 class="doc-title">Shopping Lists</h3>
           <p class="doc-description">Save and manage your shopping lists across sessions</p>
           <ul class="step-list">
@@ -896,7 +983,7 @@
         </div>
 
         <div class="doc-card">
-          <span class="doc-icon">🍽️</span>
+          <span class="doc-icon"><i class="fas fa-leaf"></i></span>
           <h3 class="doc-title">Recipe Planning</h3>
           <p class="doc-description">Get recipes and auto-fill your cart with all ingredients</p>
           <ul class="step-list">
@@ -907,7 +994,7 @@
         </div>
 
         <div class="doc-card">
-          <span class="doc-icon">🛒</span>
+          <span class="doc-icon"><i class="fas fa-shopping-cart"></i></span>
           <h3 class="doc-title">Cart Management</h3>
           <p class="doc-description">Modify quantities and checkout directly from chat</p>
           <ul class="step-list">
@@ -918,7 +1005,7 @@
         </div>
 
         <div class="doc-card">
-          <span class="doc-icon">⭐</span>
+          <span class="doc-icon"><i class="fas fa-star"></i></span>
           <h3 class="doc-title">Personalization</h3>
           <p class="doc-description">AI learns your preferences over time for better recommendations</p>
           <ul class="step-list">
@@ -935,7 +1022,7 @@
   <section class="development-section">
     <div class="section-container">
       <div class="section-header">
-        <div class="section-label">🛠️ Development Journey</div>
+        <div class="section-label"><i class="fas fa-tools"></i> Development Journey</div>
         <h2 class="section-title">How We Built This</h2>
         <p class="section-description">
           Challenges overcome and innovations implemented in creating this intelligent shopping assistant
@@ -949,9 +1036,9 @@
             <div class="timeline-date">Phase 1: Foundation</div>
             <div class="timeline-title">LLM Integration & Architecture</div>
             <div class="timeline-description">
-              Set up FastAPI backend with OpenAI GPT integration, designed conversation flow, and built core chat infrastructure.
-              <span class="challenge-badge">Challenge: Token limits</span>
-              <span class="solution-badge">Solution: Context management</span>
+              Set up FastAPI backend with LLM integration, designed conversation flow, and built core chat infrastructure.
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: CPU-limited local LLM (~6 mins/response)</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Switched to DeepSeek & Gemini APIs (reduced to seconds)</span>
             </div>
           </div>
         </div>
@@ -962,9 +1049,9 @@
             <div class="timeline-date">Phase 2: NLP & Intent Classification</div>
             <div class="timeline-title">Smart Shopping Intent Recognition</div>
             <div class="timeline-description">
-              Implemented intent classification system to distinguish between product search, cart operations, and recipe planning.
-              <span class="challenge-badge">Challenge: Multi-intent recognition</span>
-              <span class="solution-badge">Solution: ML classifier pipeline</span>
+              Implemented intent classification system to distinguish between product search, cart operations, and recipe planning using LLM function calling.
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Context loop confusion—LLM repeating outputs</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Hardcoded logic to prevent repeated function calls</span>
             </div>
           </div>
         </div>
@@ -975,9 +1062,9 @@
             <div class="timeline-date">Phase 3: Image Processing</div>
             <div class="timeline-title">OCR & Shopping List Extraction</div>
             <div class="timeline-description">
-              Integrated image recognition and OCR to extract shopping items from handwritten photos using Azure Vision API.
-              <span class="challenge-badge">Challenge: Handwriting accuracy</span>
-              <span class="solution-badge">Solution: Fuzzy matching + LLM refinement</span>
+              Integrated image recognition and OCR to extract shopping items from handwritten photos using Gemini Vision API with rapid processing.
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Handwriting accuracy and variant recognition</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Multi-API approach with fuzzy matching fallback</span>
             </div>
           </div>
         </div>
@@ -988,9 +1075,9 @@
             <div class="timeline-date">Phase 4: Database & Inventory</div>
             <div class="timeline-title">Product Database Integration</div>
             <div class="timeline-description">
-              Connected to product inventory database with real-time stock checking and pricing information.
-              <span class="challenge-badge">Challenge: Performance at scale</span>
-              <span class="solution-badge">Solution: Caching + indexing</span>
+              Connected to product inventory database with real-time stock checking and pricing information for accurate suggestions.
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Query performance at scale</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Intelligent caching and indexing strategies</span>
             </div>
           </div>
         </div>
@@ -1001,9 +1088,9 @@
             <div class="timeline-date">Phase 5: Frontend & UX</div>
             <div class="timeline-title">Interactive Chat Interface</div>
             <div class="timeline-description">
-              Built responsive chat UI with streaming responses, real-time cart updates, and modern design aesthetics.
-              <span class="challenge-badge">Challenge: Real-time sync</span>
-              <span class="solution-badge">Solution: WebSocket + event systems</span>
+              Built responsive chat UI with streaming responses, real-time cart updates, and modern 2026-style design aesthetics.
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Real-time synchronization between components</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Event-driven architecture with localStorage cache</span>
             </div>
           </div>
         </div>
@@ -1014,9 +1101,9 @@
             <div class="timeline-date">Phase 6: Testing & Optimization</div>
             <div class="timeline-title">Quality Assurance & Performance</div>
             <div class="timeline-description">
-              Comprehensive testing, performance optimization, and user feedback integration for production readiness.
-              <span class="challenge-badge">Challenge: Edge cases</span>
-              <span class="solution-badge">Solution: Robust error handling</span>
+              Comprehensive testing, performance optimization, and user feedback integration for production readiness and reliability.
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Edge case handling and error resilience</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Robust error handling and graceful degradation</span>
             </div>
           </div>
         </div>
@@ -1024,11 +1111,82 @@
     </div>
   </section>
 
-  <!-- SECTION 6: TESTING & METRICS -->
+  <!-- SECTION 6: FUTURE UPGRADES -->
+  <section class="future-section">
+    <div class="section-container">
+      <div class="section-header">
+        <div class="section-label"><i class="fas fa-lightbulb"></i> Future Enhancements</div>
+        <h2 class="section-title">Roadmap & Upcoming Features</h2>
+        <p class="section-description">
+          Exciting innovations planned to further revolutionize the shopping experience
+        </p>
+      </div>
+
+      <div class="upgrades-grid">
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-voice"></i></div>
+          <h3>Voice Shopping</h3>
+          <p>Hands-free shopping with natural voice commands and conversational audio responses for seamless interaction.</p>
+          <span class="upgrade-badge">Q3 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-mobile-alt"></i></div>
+          <h3>Mobile App</h3>
+          <p>Native iOS and Android applications with offline capability and push notifications for deals and recommendations.</p>
+          <span class="upgrade-badge">Q4 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-brain"></i></div>
+          <h3>Advanced ML Models</h3>
+          <p>Local fine-tuned models for faster inference and personalization without relying solely on API calls.</p>
+          <span class="upgrade-badge">Q2 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-users"></i></div>
+          <h3>Multi-User Families</h3>
+          <p>Household shopping with individual preferences, shared carts, and smart consensus for family purchases.</p>
+          <span class="upgrade-badge">Q2 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-barcode"></i></div>
+          <h3>Barcode Scanning</h3>
+          <p>Real-time product scanning with instant pricing and stock information for in-store and online shopping.</p>
+          <span class="upgrade-badge">Q1 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-credit-card"></i></div>
+          <h3>Payment Integration</h3>
+          <p>Seamless checkout with multiple payment methods, loyalty programs, and subscription services built-in.</p>
+          <span class="upgrade-badge">Q3 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-global"></i></div>
+          <h3>Multi-Store Support</h3>
+          <p>Integration with multiple retailers and marketplaces for unified shopping across different platforms.</p>
+          <span class="upgrade-badge">Q4 2026</span>
+        </div>
+
+        <div class="upgrade-card">
+          <div class="upgrade-icon"><i class="fas fa-leaf"></i></div>
+          <h3>Sustainability Insights</h3>
+          <p>Carbon footprint tracking and eco-friendly product recommendations for conscious shopping decisions.</p>
+          <span class="upgrade-badge">Q3 2026</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 7: TESTING & METRICS -->
   <section class="testing-section">
     <div class="section-container">
       <div class="section-header">
-        <div class="section-label">📊 Performance & Results</div>
+        <div class="section-label"><i class="fas fa-chart-line"></i> Performance & Results</div>
         <h2 class="section-title">Testing Results & Metrics</h2>
         <p class="section-description">
           Comprehensive analysis of our GPT's performance across key dimensions
@@ -1062,10 +1220,10 @@
       </div>
 
       <div class="test-results">
-        <h3 class="results-title">✅ Test Results Summary</h3>
+        <h3 class="results-title"><i class="fas fa-check-square"></i> Test Results Summary</h3>
 
         <div class="result-item">
-          <div class="result-status pass">✓</div>
+          <div class="result-status pass"><i class="fas fa-check"></i></div>
           <div class="result-text">
             <h4>Natural Language Understanding</h4>
             <p>94.2% accuracy in interpreting user queries and extracting actionable intent</p>
@@ -1073,7 +1231,7 @@
         </div>
 
         <div class="result-item">
-          <div class="result-status pass">✓</div>
+          <div class="result-status pass"><i class="fas fa-check"></i></div>
           <div class="result-text">
             <h4>Product Recommendation Engine</h4>
             <p>87.5% successful match rate between user requests and available products</p>
@@ -1081,7 +1239,7 @@
         </div>
 
         <div class="result-item">
-          <div class="result-status pass">✓</div>
+          <div class="result-status pass"><i class="fas fa-check"></i></div>
           <div class="result-text">
             <h4>Image OCR Processing</h4>
             <p>82% accuracy in extracting items from handwritten shopping lists</p>
@@ -1089,7 +1247,7 @@
         </div>
 
         <div class="result-item">
-          <div class="result-status pass">✓</div>
+          <div class="result-status pass"><i class="fas fa-check"></i></div>
           <div class="result-text">
             <h4>Response Latency</h4>
             <p>Average 250ms to first token, enabling smooth real-time conversation</p>
@@ -1097,7 +1255,7 @@
         </div>
 
         <div class="result-item">
-          <div class="result-status pass">✓</div>
+          <div class="result-status pass"><i class="fas fa-check"></i></div>
           <div class="result-text">
             <h4>Error Recovery</h4>
             <p>System gracefully handles ambiguous requests with clarification prompts</p>
@@ -1105,7 +1263,7 @@
         </div>
 
         <div class="result-item">
-          <div class="result-status pass">✓</div>
+          <div class="result-status pass"><i class="fas fa-check"></i></div>
           <div class="result-text">
             <h4>User Experience</h4>
             <p>92.8% user satisfaction rating with intuitive interface and helpful responses</p>
@@ -1123,7 +1281,7 @@
         Join thousands of users experiencing the future of e-commerce with intelligent, conversational shopping assistance.
       </p>
       <button class="btn-primary btn-large" onclick="document.getElementById('chatContainer').classList.remove('hidden'); document.getElementById('chatbotCta').classList.add('hidden');">
-        Start Your Journey Today
+        <i class="fas fa-arrow-right"></i> Start Your Journey Today
       </button>
     </div>
   </section>
