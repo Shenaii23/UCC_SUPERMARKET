@@ -1173,10 +1173,22 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             # CASE 1: User is selecting from SUBCATEGORIES (not products yet)
             if last_subcategories and not last_products:
                 #print("[FOLLOW_UP] CASE 1: Subcategory selection detected")
-                #print(f"[FOLLOW_UP] Available subcategories: {[s['subcategory'] for s in last_subcategories]}")
+                
+                # Check for broad query "show me everything" or "what do you have"
+                broad_queries = ["show me everything", "what do you have", "list everything", "all products", "show me products", "what are the types"]
+                if any(q in user_message.lower() for q in broad_queries):
+                    subcategory_list = ""
+                    for i, sub in enumerate(last_subcategories[:15], 1):
+                        subcategory_list += f"\n• {sub['subcategory']} ({sub['count']} items)"
+                    
+                    return json.dumps({
+                        "message": f"Sure! In {last_category or 'this section'}, we have the following types of items:\n{subcategory_list}\nWhich one would you like to explore?",
+                        "action_ready": False
+                    })
+
                 from intents.stock_check import extract_subcategory_from_response, get_products_by_subcategory
                 from services.llm_response import save_products
-                
+
                 # ========== LAYER 1: TRY FAST MATCHING FIRST ==========
                 available_subcategories = [s['subcategory'] for s in last_subcategories]
                 user_subcategory_selection = extract_subcategory_from_response(user_message, available_subcategories)
@@ -1334,6 +1346,23 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                         "action_ready": True
                     })
                 
+                # Check for broad query "show me products" or "list items"
+                broad_queries = ["show me products", "show products", "list products", "list items", "what products", "what do you have", "show me everything"]
+                if any(q in user_message.lower() for q in broad_queries):
+                    product_list = ""
+                    for p in last_products[:15]:
+                        stock = "✅" if p.get('in_stock', True) else "❌"
+                        product_list += f"\n• {p['product_name']} — ${p['price']} {stock}"
+                    
+                    if len(last_products) > 15:
+                        product_list += f"\n• ... and {len(last_products) - 15} more items"
+
+                    return json.dumps({
+                        "message": f"Sure! Here are the products in {last_category or 'this section'}:\n{product_list}\nWhich one would you like to explore?",
+                        "products": last_products,
+                        "action_ready": False
+                    })
+
                 # No match for product
                 return json.dumps({
                     "message": f"I didn't catch that. Could you pick from: {', '.join([p['product_name'] for p in last_products[:3]])}?",
@@ -1419,5 +1448,11 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 
                 llm_response = await message_to_llm(enhanced_prompt, user_message, chat_history)
                 return llm_response
+
+    if not llm_response or llm_response.strip() == "":
+        llm_response = json.dumps({
+            "message": "I'm here to help! Could you please tell me more about what you're looking for?",
+            "action_ready": False
+        })
 
     return llm_response

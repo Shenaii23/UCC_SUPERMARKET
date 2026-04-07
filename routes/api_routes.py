@@ -8,7 +8,7 @@ import json
 cart_router = APIRouter()
 
 class CartItem(BaseModel):
-    product_code: str
+    product_code: Optional[str] = None
     quantity: int = 1
     product_name: Optional[str] = None
     price: Optional[float] = None
