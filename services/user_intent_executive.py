@@ -12,8 +12,7 @@ from intents.get_recipe import get_recipe_data
 import time
 import os
 from dotenv import load_dotenv
-from services.context_handler import get_user_state
-from intents.recommend_recipe import is_recipe_selection
+from services.context_handler import get_user_state, is_recipe_selection, get_selected_recipe
 
 
 load_dotenv()
@@ -34,6 +33,89 @@ GEMINI_URL       = "https://generativelanguage.googleapis.com/v1beta2/models/gem
 GEMINI_MODEL     = "gemini-2.5-pro"
 
 USE_DEEPSEEK     = True 
+
+
+# ─────────────────────────────────────────────
+#  EXPRESS PATH HELPERS
+# ─────────────────────────────────────────────
+
+def get_express_recipe_json(recipe_row, state):
+    """
+    Format a beautiful Markdown recipe response and prepare cart ingredients.
+    Bypasses the LLM for a fast, deterministic response.
+    Handles heuristic re-alignment for malformed rows.
+    """
+    # Extract raw data
+    r_name = recipe_row.get('recipe_name', 'Unknown Recipe')
+    r_servings = str(recipe_row.get('servings', '4'))
+    r_ingredients_raw = recipe_row.get('ingredients_with_amounts', '')
+    r_instructions_raw = recipe_row.get('instructions', '')
+    
+    # --- HEURISTIC RE-ALIGNMENT for Malformed Rows (e.g. Shrimp Scampi) ---
+    # Detect if savings is actually an instruction (Step 1 leak)
+    if "Step 1" in r_servings or "Step 1" in r_ingredients_raw:
+        #print(f"[HEURISTIC] Malformed row detected for '{r_name}'. Re-aligning columns...")
+        if "Step 1" in r_servings:
+            actual_instructions = r_servings + " | " + r_instructions_raw
+            r_servings = "4" # Default for shifted rows
+            r_instructions_raw = actual_instructions
+            
+        # Clean ingredients if category leaked in: "Parsley (1/4 cup),Main Dish" -> "Parsley (1/4 cup)"
+        if "," in r_ingredients_raw:
+            r_ingredients_raw = r_ingredients_raw.split(',')[0].strip()
+
+    # Update session state for future context
+    state["selected_recipe"] = r_name
+    state["last_recipe_name"] = r_name
+    state["last_recipe_ingredients"] = r_ingredients_raw
+    
+    # Prepare ingredients for added_products payload
+    ingredient_items = []
+    if r_ingredients_raw:
+        ingredients = r_ingredients_raw.split('|')
+        for ing in ingredients:
+            ing = ing.strip()
+            if not ing: continue
+            name = ing.split('(')[0].strip() if '(' in ing else ing.strip()
+            if name:
+                ingredient_items.append({
+                    "product_name": name, 
+                    "quantity": 1, 
+                    "price": 0
+                })
+    
+    # --- ADVANCED INSTRUCTION PARSING ---
+    # Split by pipes or common step markers
+    import re
+    # Match "Step X:" or "Step X -" or just "|"
+    raw_steps = re.split(r'\s*\|\s*|(?=Step\s*\d+[:\-.])', r_instructions_raw)
+    
+    cleaned_steps = []
+    for step in raw_steps:
+        s = step.strip().strip('"').strip("'")
+        if s and len(s) > 5:
+            # Remove redundant "Step X:" from within the string if we're adding our own numbers
+            s = re.sub(r'^Step\s*\d+[:\-.]\s*', '', s)
+            cleaned_steps.append(s)
+    
+    if not cleaned_steps:
+        display_instructions = r_instructions_raw # Fallback
+    else:
+        display_instructions = "\n\n".join([f"{idx+1}. {step}" for idx, step in enumerate(cleaned_steps)])
+    
+    # Build beautiful Markdown message
+    formatted_ingredients = "\n".join([f"• {i.strip()}" for i in r_ingredients_raw.split('|') if i.strip()])
+    
+    message = f"Great choice! **{r_name}** is a classic. Here's everything you need to make it (Serves: {r_servings}):\n\n"
+    message += "### Ingredients\n" + formatted_ingredients + "\n\n"
+    message += "### Instructions\n\n" + display_instructions + "\n\n"
+    message += "I've gone ahead and added these ingredients to your cart for you! 🛒"
+    
+    return json.dumps({
+        "message": message,
+        "added_products": ingredient_items,
+        "action_ready": True
+    })
 
 
 # ─────────────────────────────────────────────
@@ -156,8 +238,6 @@ def fetch_intent():
             Example: "Do you have milk?" or "How much is the bread?" or "Got any apples?" or "I need chicken" or "I want eggs"
         - "shopping_list": User uploads a shopping list.
             Example: "I have a shopping list" or "Here is my shopping list"
-        - "add_shopping_list_to_cart": User wants to add their shopping list to their cart.
-            Example: "Add my shopping list to my cart" or "Add my list to my cart"
         - "inventory_check": User wants to know whats in the inventory
             Example: "What type of meat do you have?" or "What type of vegetables do you have?"
         - "get_recipe": User asks for instructions or ingredients for a specific dish.
@@ -204,6 +284,8 @@ def fetch_intent():
                     "Do you offer curbside pickup?"
         - "follow_up": User is responding to a previous question or selecting from a list
             Example: "Yes that one" or "the first one", "chicken" or "beef" or "oxtails" or "that one"
+        - "reorder_last_list": User wants to reorder their last shopping list
+            Example: "Reorder my last shopping list" or "Reorder my previous list" or "Reorder my last order"
             
         ENTITIES:
         - product_name: The item (e.g., "apples").
@@ -211,6 +293,7 @@ def fetch_intent():
         - category_hint: Based on the item, predict the store category.
         - quantity: number if the user states it
         - budget: monetary amount if mentioned
+        - If you suggested a recipe and the user wants to add it to their cart intent must be "add_to_cart".
 
         RULES:
         1. Return ONLY valid JSON. No conversational text.
@@ -219,8 +302,9 @@ def fetch_intent():
         4. If the user says something like "yes", "sure", "ok", or "no", "not really" in response to an assistant question, map it to the logical intent.
            - If responding to "Would you like to add this to your cart?", "yes" -> "add_to_cart".
            - If responding to "Would you like a recipe for this?", "yes" -> "get_recipe".
-        5. If the user mentions a monetary value or budget, intent must be "budget_recipe_suggestion".
-        6. If the user asks for a fresh ingredient (fruit/veg), category_hint MUST be "Produce".
+        5. If the user mentions a budget WITHOUT a specific product (e.g., "What can I make for $20?"), intent is "budget_recipe_suggestion".
+        6. PRIORITY RULE: If the user mentions a specific product name AND a price/budget (e.g., "milk under $10"), intent MUST be "stock_check". The price should be extracted into the budget entity, but the intent remains a stock search.
+        7. If the user asks for a fresh ingredient (fruit/veg), category_hint MUST be "Produce".
         8. If the user says "I need X", "I want X", "I am looking for X", or asks "got X?" / "you have X?", intent is "stock_check".
         8. If user mentions products and intent is "recommend_recipe", list them in product_name.
         9. If the user's message is short (1-3 words) AND the last assistant message contained a list or asked a question, set intent to "follow_up".
@@ -274,8 +358,8 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
     intent_possibilities = ["stock_check", "get_recipe", "add_to_cart", "remove_from_cart", "view_cart",
                             "check_recipe_availability", "recommend_recipe",
                             "budget_recipe_suggestion", "general_chat", "take_me_to_cart", "terms_and_conditions", "recipe_from_cart_items",
-                            "inventory_check", "shopping_list", "add_shopping_list_to_cart", "store_info", "product_location", "checkout",
-                            "follow_up"]
+                            "inventory_check", "shopping_list",  "store_info", "product_location", "checkout",
+                            "follow_up", "reorder_last_list"]
 
     
     execution = llm_response_extraction(llm_data)
@@ -286,9 +370,13 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
     if intent not in intent_possibilities:
         intent = "general_chat"
 
-    # Contextual Override: If the assistant just explicitly asked if the user wants to add items to their cart, 
-    # treat their next short response (even if it's just a noun like "the boneless chicken") as an add_to_cart intent.
-    # Contextual Overrides based on conversation history
+    # --- INTENT SMOOTHING ---
+    # If the user mentioned a recipe but the intent was misdetected as something else,
+    # let's lean towards the recipe flow to ensure the Express Path can trigger.
+    if entities.recipe_name and intent in ["general_chat", "inventory_check", "stock_check"]:
+        #print(f"Recipe name detected ('{entities.recipe_name}'), overriding {intent} -> get_recipe")
+        intent = "get_recipe"
+
     if len(chat_history) > 0:
         last_bot_msg = chat_history[-1].get("content", "").lower()
         
@@ -305,9 +393,9 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             # Broaden to 15 words to capture "the oxtails how much are they"
             if len(words) <= 15 and intent in ["general_chat", "stock_check", "add_to_cart", "follow_up"]:
                 intent = "inventory_check"
-                print(f"[OVERRIDE] Forcing intent to inventory_check for selection: '{user_message}'")
+                #print(f"[OVERRIDE] Forcing intent to inventory_check for selection: '{user_message}'")
 
-    # Fallback: treat direct shopping requests as stock checks when intent falls back to general chat.
+    # treat direct shopping requests as stock checks when intent falls back to general chat.
     if intent == "general_chat":
         normalized = user_message.lower()
         stock_keywords = re.compile(r"\b(i need|need|i want|want|looking for|looking to buy|find|got any|have any|have|do you have)\b")
@@ -327,7 +415,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
     last_response = state.get("last_response")
 
     # If the last intent was inventory check and the user message is short likely a selection 
-    if last_intent in ["inventory_check", "stock_check", "recommend_recipe"]:
+    if last_intent in ["inventory_check", "stock_check", "recommend_recipe", "get_recipe"]:
         print(f"Check 1: [OVERRIDE] Changing intent from {intent} to follow_up based on conversation context")
         words = user_message.lower().split()
         # Short message (1-3 words) that's not a greeting
@@ -354,18 +442,105 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
         case "get_recipe":
             # Check if the intent is "get_recipe"
             #Check recipe availability
+            from intents.get_recipe import get_recipe_data
+
+            # Store the recipe data in user state for later use in add_to_cart
+            recipe_data = get_recipe_data(entities)
+            print(f"🔍 [get_recipe] Search for '{entities.recipe_name}' found {len(recipe_data)} matches")
+            
+            if len(recipe_data) > 1:
+                # Multiple matches found
+                options = [r['recipe_name'] for r in recipe_data]
+                state["last_suggestions"] = options # Re-use suggestsions logic for follow-ups
+                state["last_recipe_options"] = recipe_data # Store full objects
+                
+                from services.llm_logic import prepare_recipe_selection_response
+                system_prompt = await prepare_recipe_selection_response(user_message, options)
+                llm_res_text = await message_to_llm(system_prompt, " ", chat_history)
+                
+                # Return JSON with suggestions for UI and state persistence
+                return json.dumps({
+                    "message": llm_res_text,
+                    "suggestions": options,
+                    "action_ready": False
+                })
+                
+            elif recipe_data:
+                # Exactly one match
+                r = recipe_data[0]
+                #print(f" [get_recipe] Express Path: Single match found: '{r['recipe_name']}'")
+                return get_express_recipe_json(r, state)
+
+            # If no direct match in DB, fallback to LLM
+            from services.llm_logic import prepare_get_recipe_response
             system_prompt = await prepare_get_recipe_response(entities, user_message)
             llm_response  = await message_to_llm(system_prompt, " ", chat_history)
-            #print("LLM response:", llm_response)
 
             return llm_response
 
         case "add_to_cart":
-            from services.llm_response import get_products
+            from services.llm_response import get_products, save_products
             from intents.cart_logic import get_cart_items
 
             session_products = get_products(user_id)
             msg_lower = user_message.lower().strip()
+
+            # ╔════════════════════════════════════════════════════════════╗
+            # ║  NEW: Check if user is adding recipe ingredients          ║
+            # ║  (from previous recipe-related call)                       ║
+            # ╚════════════════════════════════════════════════════════════╝
+            # Prioritize recipe if "them", "those" or "ingredients" is mentioned
+            mentions_those = any(w in msg_lower for w in ["them", "those", "ingredients"])
+            
+            if (mentions_those or not session_products) and last_intent in ["get_recipe", "follow_up", "recommend_recipe", "budget_recipe_suggestion"]:
+                last_recipe_ingredients = state.get("last_recipe_ingredients", "")
+                last_recipe_name = state.get("last_recipe_name", "")
+
+                # Check for affirmation patterns like "yes" or "add them"
+                affirmations = {"yes", "yeah", "yep", "ok", "okay", "sure", "add", "add it", "that one", "them", "those", "ingredients"}
+                is_affirmation = any(word in msg_lower for word in affirmations)
+                
+                # Check if they said "them" or "ingredients" which explicitly points to the recipe
+                mentions_recipe_items = any(w in msg_lower for w in ["them", "those", "ingredients", "recipe"])
+
+                if (is_affirmation or mentions_recipe_items) and last_recipe_ingredients:
+                    print(f"🍳 USER AFFIRMED TO ADD RECIPE INGREDIENTS FROM: {last_recipe_name}")
+
+                    # Parse recipe ingredients from the stored format
+                    # Format: "Chicken (1 whole) | Scotch Bonnet Peppers (2) | Green Onions (6) | ..."
+                    ingredient_items = []
+
+                    # Split by pipe delimiter
+                    ingredients = last_recipe_ingredients.split('|')
+
+                    for ingredient in ingredients:
+                        ingredient = ingredient.strip()
+                        if not ingredient:
+                            continue
+
+                        # Extract just the product name (everything before the parenthesis)
+                        # e.g., "Chicken (1 whole)" -> "Chicken"
+                        if '(' in ingredient:
+                            name = ingredient.split('(')[0].strip()
+                        else:
+                            name = ingredient.strip()
+
+                        if name:
+                            ingredient_items.append({
+                                "product_name": name,
+                                "quantity": 1,
+                                "price": 0
+                            })
+                            print(f"  Added ingredient: {name}")
+
+                    if ingredient_items:
+                        message = f"Great! I'm adding the ingredients for {last_recipe_name} to your cart."
+                        print(f"Adding {len(ingredient_items)} ingredients to cart")
+                        return json.dumps({
+                            "message": message,
+                            "added_products": ingredient_items,
+                            "action_ready": True
+                        })
 
             # -------------------------------
             # 1. HARD MATCHING (NO LLM)
@@ -400,7 +575,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 # 2. IF WE FOUND A MATCH → RETURN DIRECTLY
                 # -------------------------------
                 if best_match:
-                    print("✅ PYTHON MATCH:", best_match["product_name"])
+                    ##print(" PYTHON MATCH:", best_match["product_name"])
 
                     return json.dumps({
                         "message": f"Perfect! I've added {best_match['product_name']} to your cart.",
@@ -422,7 +597,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 if msg_lower in affirmations:
                     first = session_products[0]
 
-                    print("✅ DEFAULT PICK:", first["product_name"])
+                    ##print(" DEFAULT PICK:", first["product_name"])
 
                     return json.dumps({
                         "message": f"Great choice! I've added {first['product_name']} to your cart.",
@@ -439,7 +614,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             # -------------------------------
             # 4. FALLBACK → USE LLM ONLY IF NEEDED
             # -------------------------------
-            print("⚠️ Falling back to LLM for add_to_cart")
+            print("Test 2: Falling back to LLM for add_to_cart")
 
             system_prompt = await prepare_cart_response(entities, user_message, user_id)
             llm_response = await message_to_llm(system_prompt, " ", chat_history)
@@ -465,7 +640,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             system_prompt = await prepare_check_recipe_availability_response(entities, user_message)
             llm_response  = await message_to_llm(system_prompt, " ", chat_history)
 
-            #print("Recipe LLM response:", llm_response)
+            ##print("Recipe LLM response:", llm_response)
             return llm_response
         
         case "recommend_recipe":
@@ -494,10 +669,34 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             return llm_response
         
         case "budget_recipe_suggestion":
+            from intents.budget_recipe_suggestion import budget_recipe_suggestion
+            
+            # 1. Check if we already have context (meal type, etc.)
+            # If the user message is just "$5000", prepare_budget_recipe_response asks questions.
             system_prompt = await prepare_budget_recipe_response(entities, user_message)
-            llm_response  = await message_to_llm(system_prompt, " ", chat_history)
-
-            return llm_response
+            
+            # 2. Get the actual data
+            suggestions_result = budget_recipe_suggestion(entities)
+            recipes = suggestions_result.get("suggestions", [])
+            
+            # 3. If no recipes yet or prompt is asking questions, use LLM
+            # We check if the prompt looks like the clarifying question one
+            if not recipes or "clarifying questions" in system_prompt:
+                llm_response = await message_to_llm(system_prompt, " ", chat_history)
+                return llm_response
+            
+            # 4. We found recipes! Use LLM for intro, but return suggestions for UI
+            llm_response_text = await message_to_llm(system_prompt, " ", chat_history)
+            
+            recipe_names = [r["recipe_name"] for r in recipes]
+            state["last_suggestions"] = recipe_names
+            state["last_recipe_options"] = recipes
+            
+            return json.dumps({
+                "message": llm_response_text,
+                "suggestions": recipe_names,
+                "action_ready": False
+            })
         
         case "take_me_to_cart":
             return json.dumps({"message": "Sure! Heres your cart link when youre ready to checkout. \n https://localhost:3000/cart",
@@ -524,6 +723,11 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
 
             return llm_response
         
+        case "reorder_last_list":
+            return json.dumps({"message": "Sorry, we don't have that feature yet. But you can send your list and I'll add it to your cart.",
+                               'action': 'redirect_to_cart',
+                               'redirect_url': '/cart'})
+        
         case "store_info":
             from intents.terms_and_conditions import prepare_store_info_response
             system_prompt = await prepare_store_info_response(user_message)
@@ -546,10 +750,10 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             
             state = get_user_state(user_id)
             
-            print(f"[INVENTORY] Processing: '{user_message}'")
-            print(f"[INVENTORY] last_intent: {state.get('last_intent')}")
-            print(f"[INVENTORY] has subcategories: {bool(state.get('last_subcategories'))}")
-            print(f"[INVENTORY] has products: {bool(state.get('last_inventory_products'))}")
+            #print(f"[INVENTORY] Processing: '{user_message}'")
+            #print(f"[INVENTORY] last_intent: {state.get('last_intent')}")
+            #print(f"[INVENTORY] has subcategories: {bool(state.get('last_subcategories'))}")
+            #print(f"[INVENTORY] has products: {bool(state.get('last_inventory_products'))}")
 
             # Fall back llm search category prompt
             fall_back_prompt = f"""
@@ -617,13 +821,13 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 # Use LLM to extract product selection
                 from services.llm_logic import prepare_inventory_selection_response
                 options = [p['product_name'] for p in last_products]
-                print("Building product selection prompt for LLM...")
+                #print("Building product selection prompt for LLM...")
                 prompt = await prepare_inventory_selection_response(user_message, options)
-                print("Checking product selection with LLM...")
+                #print("Checking product selection with LLM...")
                 res_raw = await message_to_llm(prompt, user_message, chat_history)
 
-                print(f"[PROMPT]: {prompt}")
-                print(f"[RESPONSE]: {res_raw}")
+                #print(f"[PROMPT]: {prompt}")
+                #print(f"[RESPONSE]: {res_raw}")
             
 
                 try:
@@ -675,7 +879,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             # Subcategory selection
             if is_subcategory_selection(user_message, user_id):
                 selected_subcategory = get_selected_subcategory(user_message)
-                print(f"[INVENTORY] Subcategory selection detected (user): '{selected_subcategory}'")
+                #print(f"[INVENTORY] Subcategory selection detected (user): '{selected_subcategory}'")
                 selection_made = selected_subcategory
 
             
@@ -696,7 +900,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                     selected_subcategory = selection_made
                     last_category = state.get("last_category")
                     
-                    print(f"[INVENTORY] Subcategory selection detected (LLM): '{selected_subcategory}' in category '{last_category}'")
+                    #print(f"[INVENTORY] Subcategory selection detected (LLM): '{selected_subcategory}' in category '{last_category}'")
                     
                     if last_category:
                         # Get all products in this subcategory
@@ -797,7 +1001,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 
                 category, success = extract_category_from_query(user_message)
 
-                print(f"Initial inventory check. Detected category: '{category}'")
+                #print(f"Initial inventory check. Detected category: '{category}'")
 
                 
                 # If no category detected, ask user to specify
@@ -857,7 +1061,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
 
                     # Extract category from LLM response
                     category = json.loads(category_response).get("category")
-                    print(f"LLM fallback category detection: '{category}'")
+                    #print(f"LLM fallback category detection: '{category}'")
 
                     if category == "Other":
                         return json.dumps({
@@ -866,7 +1070,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                             "action_ready": False
                         })
                     
-                    print(f"Initial inventory check. Detected category: '{category}'")
+                    #print(f"Initial inventory check. Detected category: '{category}'")
 
                 
                     # If no category detected, ask user to specify
@@ -960,16 +1164,16 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
             last_suggestions = state.get("last_suggestions")
 
             
-            print(f"[FOLLOW_UP] last_intent: {last_intent}")
-            print(f"[FOLLOW_UP] has subcategories: {bool(last_subcategories)}")
-            print(f"[FOLLOW_UP] has products: {bool(last_products)}")
-            print(f"[FOLLOW_UP] last_category: {last_category}")
-            print(f"[FOLLOW_UP] last_recipe_name: {recipe_name}")
+            #print(f"[FOLLOW_UP] last_intent: {last_intent}")
+            #print(f"[FOLLOW_UP] has subcategories: {bool(last_subcategories)}")
+            #print(f"[FOLLOW_UP] has products: {bool(last_products)}")
+            #print(f"[FOLLOW_UP] last_category: {last_category}")
+            #print(f"[FOLLOW_UP] last_recipe_name: {recipe_name}")
             
             # CASE 1: User is selecting from SUBCATEGORIES (not products yet)
             if last_subcategories and not last_products:
-                print("[FOLLOW_UP] CASE 1: Subcategory selection detected")
-                print(f"[FOLLOW_UP] Available subcategories: {[s['subcategory'] for s in last_subcategories]}")
+                #print("[FOLLOW_UP] CASE 1: Subcategory selection detected")
+                #print(f"[FOLLOW_UP] Available subcategories: {[s['subcategory'] for s in last_subcategories]}")
                 from intents.stock_check import extract_subcategory_from_response, get_products_by_subcategory
                 from services.llm_response import save_products
                 
@@ -978,12 +1182,12 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 user_subcategory_selection = extract_subcategory_from_response(user_message, available_subcategories)
             
                 if user_subcategory_selection:
-                    print(f"[FOLLOW_UP] Fast match found: {user_subcategory_selection}")
+                    #print(f"[FOLLOW_UP] Fast match found: {user_subcategory_selection}")
                     
                     # Search for products in this subcategory
                     user_product_selection = get_products_by_subcategory(last_category, user_subcategory_selection)
 
-                    print(f"[FOLLOW_UP] Products found for '{user_subcategory_selection}': {[p['product_name'] for p in user_product_selection]}")
+                    #print(f"[FOLLOW_UP] Products found for '{user_subcategory_selection}': {[p['product_name'] for p in user_product_selection]}")
 
                     if user_product_selection:
                         state["last_inventory_products"] = user_product_selection
@@ -1011,7 +1215,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                         })
             
                 # ========== LAYER 2: FALL BACK TO LLM IF FAST MATCH FAILED ==========
-                print("[FOLLOW_UP] Fast match failed, using LLM fallback")
+                #print("[FOLLOW_UP] Fast match failed, using LLM fallback")
                 from services.llm_logic import prepare_inventory_selection_response
                 
                 options = [s['subcategory'] for s in last_subcategories]
@@ -1026,7 +1230,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                 
                 if selection_made and selection_made != "null":
                     # ✅ LLM found a match → fetch its products
-                    print(f"[FOLLOW_UP] LLM match found: {selection_made}")
+                    #print(f"[FOLLOW_UP] LLM match found: {selection_made}")
                     
                     if last_category:
                         products = get_products_by_subcategory(last_category, selection_made)
@@ -1074,7 +1278,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                             })
             
                 # ========== LAYER 3: NOTHING MATCHED - ASK FOR CLARIFICATION ==========
-                print("[FOLLOW_UP] No match found, asking for clarification")
+                #print("[FOLLOW_UP] No match found, asking for clarification")
                 return json.dumps({
                     "message": f"I didn't catch that. Could you pick from: {', '.join([s['subcategory'] for s in last_subcategories[:5]])}?",
                     "action_ready": False
@@ -1082,9 +1286,9 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
  
 
 
-            # ✅ CASE 2: User is selecting from PRODUCTS (after subcategory was selected)
+            # CASE 2: User is selecting from products (after subcategory was selected)
             elif last_products:
-                print("[FOLLOW_UP] CASE 2: Product selection detected")
+                #print("[FOLLOW_UP] CASE 2: Product selection detected")
                 from services.llm_logic import prepare_inventory_selection_response
                 
                 options = [p['product_name'] for p in last_products]
@@ -1139,66 +1343,64 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
 
 
             # CASE C: Following up on recipe recommendations
-            elif last_intent in ["recommend_recipe", "recipe_from_cart_items", "get_recipe"] and last_suggestions:
-                print("[FOLLOW_UP] CASE A: Checking for recipe selection...")
+            elif last_intent in ["recommend_recipe", "recipe_from_cart_items", "get_recipe", "budget_recipe_suggestion"] and last_suggestions or recipe_name:
+                #print(f"[FOLLOW_UP] CASE C: Checking for recipe selection. Entities: {entities}")
                 
-                # Use the helper function to detect recipe selection
-                if is_recipe_selection(user_message, last_suggestions):
-                    print(f"[FOLLOW_UP] Recipe selection detected!")
-                    
-                    from services.context_handler import fuzzy_match
-                    
-                    text = user_message.lower().strip()
-                    
-                    # Try to find the selected recipe
-                    selected_recipe = None
-                    
-                    # Method 1: Fuzzy match against suggestions
-                    for recipe in last_suggestions:
-                        if fuzzy_match(text, recipe):
-                            selected_recipe = recipe
-                            print(f"[FOLLOW_UP] Fuzzy match found: {recipe}")
-                            break
-                    
-                    # Method 2: Ordinal selection (first, second, etc.)
-                    if not selected_recipe:
-                        ordinals = {
-                            "first": 0, "1st": 0, "one": 0,
-                            "second": 1, "2nd": 1, "two": 1,
-                            "third": 2, "3rd": 2, "three": 2,
-                        }
-                        for ordinal, index in ordinals.items():
-                            if ordinal in text and index < len(last_suggestions):
-                                selected_recipe = last_suggestions[index]
-                                print(f"[FOLLOW_UP] Ordinal match found: {ordinal} → {selected_recipe}")
+                selected_recipe = None
+                
+                # Method 0: Check if LLM already extracted a valid recipe name (entity-based)
+                if entities.recipe_name:
+                    extracted = entities.recipe_name.lower().strip()
+                    #print(f"[FOLLOW_UP] LLM extracted recipe_name entity: '{extracted}'")
+                    # Match against suggestions if they exist
+                    if last_suggestions:
+                        for recipe in last_suggestions:
+                            if extracted in recipe.lower():
+                                selected_recipe = recipe
+                                #print(f"[FOLLOW_UP] Entity match found in suggestions: {recipe}")
                                 break
+
+                # Method 1: Use the helper function if no entity match
+                if not selected_recipe and is_recipe_selection(user_message, state):
+                    #print(f"[FOLLOW_UP] Recipe selection detected via helper function")
+                    selected_recipe = get_selected_recipe(user_message, state)
+                
+                if selected_recipe:
+                    # User selected a recipe - get the full recipe
+                    print(f"[FOLLOW_UP] Final selection match: {selected_recipe}")
                     
-                    if selected_recipe:
-                        # User selected a recipe - get the full recipe
-                        print(f"[FOLLOW_UP] Getting full recipe for: {selected_recipe}")
-                        
-                        state["selected_recipe"] = selected_recipe
-                        
-                        # Call prepare_get_recipe_response to format the prompt                        
-                        system_prompt = await prepare_get_recipe_response(
-                            Entity(recipe_name=selected_recipe),
-                            f"Give me the full recipe for {selected_recipe}"
-                        )
-                        llm_response = await message_to_llm(system_prompt, " ", chat_history)
-                        return llm_response
-                    
-                    # If we detected recipe selection intent but couldn't find a match
-                    print("[FOLLOW_UP] Recipe selection detected but no recipe matched")
-                    return json.dumps({
-                        "message": f"I didn't quite catch which recipe you want. Could you pick from: {', '.join(last_suggestions[:3])}?",
-                        "action_ready": False
-                    })
+                    # EXPRESS PATH: Check if we have this recipe in our local database
+                    try:
+                        # Case-insensitive search in recipes_df
+                        match = recipes_df[recipes_df['recipe_name'].str.lower() == selected_recipe.lower()]
+                        if not match.empty:
+                            #print(f"[FOLLOW_UP] Express Path: Found local match for '{selected_recipe}'")
+                            return get_express_recipe_json(match.iloc[0], state)
+                    except Exception as e:
+                        #print(f"[FOLLOW_UP] Express path failed, falling back to LLM: {e}")
+
+                    # FALLBACK: If not in DB or error, use existing LLM chain
+                    state["selected_recipe"] = selected_recipe
+                    from services.llm_logic import prepare_get_recipe_response
+                    system_prompt = await prepare_get_recipe_response(
+                        Entity(recipe_name=selected_recipe),
+                        f"Give me the full recipe for {selected_recipe}"
+                    )
+                    llm_response = await message_to_llm(system_prompt, " ", chat_history)
+                    return llm_response
+                
+                # If we were expecting a selection but couldn't find a match
+                #print("[FOLLOW_UP] Recipe selection expected but no match found")
+                return json.dumps({
+                    "message": f"I didn't quite catch which one you mean. Could you pick from: {', '.join(last_suggestions[:3])}?",
+                    "action_ready": False
+                })
 
             # CASE E: General follow-up - let LLM handle with context
             else:
                 # Pass to general chat with full context
                 from intents.terms_and_conditions import prepare_general_chat_response
-                print("[FOLLOW_UP] CASE E: No specific follow-up detected, passing to general chat with context")
+                #print("[FOLLOW_UP] CASE E: No specific follow-up detected, passing to general chat with context")
                 system_prompt = await prepare_general_chat_response(user_message)
                 
                 # Include the last few messages for context

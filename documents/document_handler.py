@@ -174,7 +174,7 @@ class DocumentManager:
             "terms_and_conditions": ["terms", "conditions", "policy", "service", "agreement"],
             "privacy_policy": ["privacy", "data", "personal", "information", "collect"],
             "llm_guidelines": ["ai", "llm", "algorithm", "automated", "decision"],
-            "store_info": ["store", "hours", "location", "address", "phone", "departments"],
+            "store_info": ["store", "hours", "location", "address", "phone", "departments", "shipping", "delivery", "ship", "deliver"],
             "general_chat": ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "good night"],
             "deals_and_promotions": ["deal", "promotion", "discount", "sale", "offer", 'promo', 'discounts']
         }

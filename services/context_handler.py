@@ -8,6 +8,9 @@ USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Fuzzy matching threshold (0-1, higher = stricter)
 FUZZY_THRESHOLD = 0.6  # 60% match is good enough
 
+# Common words to ignore during selection matching
+STOP_WORDS = {"the", "a", "an", "of", "with", "for", "in", "on", "at", "by", "is", "it", "one", "ones", "selection", "version", "recipe"}
+
 
 def get_user_state(user_id: str) -> Dict[str, Any]:
     if user_id not in USER_SESSIONS:
@@ -75,10 +78,6 @@ def fuzzy_match(user_text: str, product_name: str, threshold: float = FUZZY_THRE
     """
     Fuzzy match user text against product name.
     Returns True if similarity is above threshold.
-    
-    Examples:
-    - "boneless chicken" vs "Boneless Skinless Chicken Breast" → True
-    - "the first one" vs "Stock - Chicken" → False
     """
     user_text = user_text.lower().strip()
     product_name = product_name.lower().strip()
@@ -87,10 +86,14 @@ def fuzzy_match(user_text: str, product_name: str, threshold: float = FUZZY_THRE
     if user_text in product_name or product_name in user_text:
         return True
 
-    # Token-level match to catch selections like "boneless chicken" -> "Boneless Skinless Chicken Breast"
+    # Token-level match
     user_tokens = set(re.findall(r"\w+", user_text))
     product_tokens = set(re.findall(r"\w+", product_name))
-    if user_tokens and user_tokens.issubset(product_tokens):
+    
+    # Filter out stop words from user tokens to handle "the chicken broccoli" -> "Chicken Broccoli Alfredo"
+    filtered_user_tokens = {t for t in user_tokens if t not in STOP_WORDS}
+    
+    if filtered_user_tokens and filtered_user_tokens.issubset(product_tokens):
         return True
     
     # Fuzzy similarity score
@@ -107,7 +110,6 @@ def is_correction(user_message: str) -> bool:
 def is_recipe_selection(user_message: str, state: dict) -> bool:
     """
     Detect if the user is selecting a recipe from the last recommendation list.
-    Supports: exact name, fuzzy match, or ordinal selection (first, second, etc.)
     """
     if state.get("last_intent") not in ("recommend_recipe", "get_recipe"):
         return False
@@ -121,11 +123,13 @@ def is_recipe_selection(user_message: str, state: dict) -> bool:
     # Check for exact/fuzzy match
     for recipe in suggestions:
         if fuzzy_match(text, recipe):
+            print(f"✅ [Selection] Matched '{text}' to '{recipe}' via fuzzy/token match")
             return True
 
     # Check for ordinal selection — "the first one", "second one"
     ordinals = ["first", "second", "third", "1st", "2nd", "3rd", "the first", "the second", "the third"]
     if any(o in text for o in ordinals):
+        print(f"✅ [Selection] Matched '{text}' via ordinal check")
         return True
 
     return False
@@ -134,10 +138,11 @@ def is_recipe_selection(user_message: str, state: dict) -> bool:
 def get_selected_recipe(user_message: str, state: dict) -> str | None:
     """
     Returns the recipe name the user is referring to.
-    Supports: exact name, fuzzy match, or ordinal selection.
     """
     text        = user_message.lower().strip()
     suggestions = state.get("last_suggestions", [])
+
+    print(f"🔍 [Selection] Attempting to match '{text}' against candidates: {suggestions}")
 
     # Check for fuzzy match first (most likely case)
     for recipe in suggestions:
@@ -263,6 +268,7 @@ def get_selected_products(user_message: str, user_id: str) -> list:
 
 def preprocess_message(user_id: str, user_message: str) -> str:
     state = get_user_state(user_id)
+    print(f"🔄 [Preprocess] Input: '{user_message}' | Last Intent: {state.get('last_intent')}")
 
     # 1. Product selection from stock check results
     if is_product_selection(user_message, user_id):
@@ -272,7 +278,7 @@ def preprocess_message(user_id: str, user_message: str) -> str:
             if not explicit_add:
                 state["pending_selection"] = selected
                 rewritten = f"Add {', '.join(selected)} to my cart"
-                #print(f"[Context] Product selection detected: {selected} → rewritten: '{rewritten}'")
+                print(f"📝 [Preprocess] Product selection detected: {selected} → rewritten: '{rewritten}'")
                 return rewritten
 
     # 2. Recipe selection from previous recommendations
@@ -280,13 +286,13 @@ def preprocess_message(user_id: str, user_message: str) -> str:
         recipe = get_selected_recipe(user_message, state)
         if recipe:
             rewritten = f"Give me the full recipe for {recipe}"
-            #print(f"[Context] Recipe selection detected: {recipe} → rewritten: '{rewritten}'")
+            print(f"📝 [Preprocess] Recipe selection detected: {recipe} → rewritten: '{rewritten}'")
             return rewritten
 
     # 3. Follow-up: user is correcting the previous response
     if is_correction(user_message) and state["last_intent"]:
         rewritten = rewrite_with_context(user_message, state)
-        #print(f"[Context] Correction detected → rewritten: '{rewritten}'")
+        print(f"📝 [Preprocess] Correction detected → rewritten: '{rewritten}'")
         return rewritten
 
     return user_message

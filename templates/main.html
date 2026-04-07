@@ -537,6 +537,137 @@
             transform: translateY(-1px);
         }
         
+        .recipe-selection-card, .product-selection-card {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            animation: slideUp 0.3s ease-out;
+            max-width: 90%;
+            align-self: flex-start;
+        }
+
+        .recipe-selection-header, .product-selection-header {
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 0.8rem;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .recipe-option, .product-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 0.9rem;
+            color: #475569;
+        }
+
+        .recipe-option:hover, .product-option:hover {
+            background: #f1f5f9;
+        }
+
+        .recipe-option input, .product-option input {
+            cursor: pointer;
+            accent-color: #e67e22;
+            width: 16px;
+            height: 16px;
+        }
+
+        .product-info {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+
+        .product-meta {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            display: flex;
+            gap: 10px;
+        }
+
+        .product-price {
+            font-weight: 600;
+            color: #e67e22;
+        }
+
+        .recipe-selection-button, .product-selection-button {
+            width: 100%;
+            margin-top: 1rem;
+            padding: 10px;
+            border-radius: 8px;
+            border: none;
+            background: #1e293b;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .recipe-selection-button:hover, .product-selection-button:hover {
+            background: #334155;
+        }
+
+        .checkout-card {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            color: white;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            animation: slideUp 0.4s ease-out;
+            text-align: center;
+            max-width: 90%;
+            align-self: center;
+        }
+
+        .checkout-header {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .checkout-subheader {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-bottom: 1.2rem;
+        }
+
+        .checkout-button {
+            display: inline-block;
+            width: 100%;
+            background: #e67e22;
+            color: white;
+            padding: 12px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1rem;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .checkout-button:hover {
+            background: #d35400;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(230, 126, 34, 0.4);
+        }
+
         .chat-input-container {
             padding: 1.2rem;
             border-top: 1px solid #e2e8f0;
@@ -1315,6 +1446,18 @@
                                 if (jsonData.added_products) {
                                     renderAddedProducts(botMessageDiv, jsonData.added_products);
                                 }
+
+                                if (jsonData.suggestions) {
+                                    renderRecipeSuggestions(botMessageDiv, jsonData.suggestions);
+                                }
+
+                                if (jsonData.product_suggestions) {
+                                    renderProductSuggestions(botMessageDiv, jsonData.product_suggestions);
+                                }
+
+                                if (jsonData.show_checkout) {
+                                    renderCheckoutButton(botMessageDiv);
+                                }
                                 
                                 if (!hasReceivedWord && jsonData.word) {
                                     removeTyping();
@@ -1384,6 +1527,214 @@
                 if (container.classList.contains('fullscreen')) exitFullscreen();
             }
         });
+
+        function renderRecipeSuggestions(messageDiv, recipes) {
+            if (!recipes || !recipes.length) return;
+            
+            removeTyping();
+
+            const card = document.createElement('div');
+            card.className = 'recipe-selection-card';
+
+            const header = document.createElement('div');
+            header.className = 'recipe-selection-header';
+            header.textContent = 'Which version would you like to see?';
+            card.appendChild(header);
+
+            const form = document.createElement('form');
+            form.id = 'recipeSelectionForm';
+
+            recipes.forEach((recipe, idx) => {
+                const recipeName = typeof recipe === 'string' ? recipe : (recipe.recipe_name || 'Unknown Recipe');
+                
+                const label = document.createElement('label');
+                label.className = 'recipe-option';
+                
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = 'recipe';
+                radio.value = recipeName;
+                radio.id = `recipe_${idx}`;
+                
+                label.appendChild(radio);
+                label.appendChild(document.createTextNode(recipeName));
+                form.appendChild(label);
+            });
+
+            card.appendChild(form);
+
+            const submitBtn = document.createElement('button');
+            submitBtn.className = 'recipe-selection-button';
+            submitBtn.textContent = 'View Selected Recipe';
+            submitBtn.type = 'button';
+            submitBtn.onclick = () => {
+                const selected = form.querySelector('input[name="recipe"]:checked');
+                if (selected) {
+                    const message = `Give me the full recipe for ${selected.value}`;
+                    document.getElementById('chatInput').value = message;
+                    sendMessage();
+                    card.style.opacity = '0.5';
+                    card.style.pointerEvents = 'none';
+                } else {
+                    showToast('Please select a recipe first', 'error');
+                }
+            };
+
+            card.appendChild(submitBtn);
+            messageDiv.parentNode.insertBefore(card, messageDiv.nextSibling);
+            card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+
+        function renderProductSuggestions(messageDiv, products) {
+            if (!products || !products.length) return;
+            
+            removeTyping();
+
+            const card = document.createElement('div');
+            card.className = 'product-selection-card';
+
+            const header = document.createElement('div');
+            header.className = 'product-selection-header';
+            header.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-shopping-basket"></i> Select items to add to cart
+                </div>
+                <a href="#" id="selectAllProducts" style="font-size: 0.8rem; color: #e67e22; text-decoration: none; font-weight: 500;">Select All</a>
+            `;
+            card.appendChild(header);
+
+            const form = document.createElement('form');
+            form.id = 'productSelectionForm';
+
+            // Select All logic
+            const selectAllBtn = header.querySelector('#selectAllProducts');
+            selectAllBtn.onclick = (e) => {
+                e.preventDefault();
+                const checkboxes = form.querySelectorAll('input[type="checkbox"]');
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                checkboxes.forEach(cb => cb.checked = !allChecked);
+                selectAllBtn.textContent = allChecked ? 'Select All' : 'Deselect All';
+            };
+
+            // Limit height and add scroll for many items
+            if (products.length > 8) {
+                form.style.maxHeight = '300px';
+                form.style.overflowY = 'auto';
+                form.style.paddingRight = '10px';
+            }
+
+            products.forEach((product, idx) => {
+                const label = document.createElement('label');
+                label.className = 'product-option';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.name = 'product';
+                checkbox.value = JSON.stringify(product);
+                checkbox.id = `product_${idx}`;
+                
+                const info = document.createElement('div');
+                info.className = 'product-info';
+                
+                const nameSpan = document.createElement('span');
+                nameSpan.innerHTML = `<strong>${product.product_name}</strong>`;
+                
+                const metaSpan = document.createElement('div');
+                metaSpan.className = 'product-meta';
+                metaSpan.innerHTML = `<span class="product-price">$${product.price}</span> <span>${product.aisle || ''}</span>`;
+                
+                info.appendChild(nameSpan);
+                info.appendChild(metaSpan);
+                
+                label.appendChild(checkbox);
+                label.appendChild(info);
+                form.appendChild(label);
+            });
+
+            card.appendChild(form);
+
+            const submitBtn = document.createElement('button');
+            submitBtn.className = 'product-selection-button';
+            submitBtn.textContent = 'Add Selected to Cart';
+            submitBtn.type = 'button';
+            submitBtn.onclick = async () => {
+                const checked = form.querySelectorAll('input[name="product"]:checked');
+                if (checked.length > 0) {
+                    const itemsToAdd = Array.from(checked).map(cb => {
+                        const p = JSON.parse(cb.value);
+                        return {
+                            product_code: p.product_code,
+                            product_name: p.product_name,
+                            price: p.price,
+                            quantity: 1
+                        };
+                    });
+
+                    try {
+                        submitBtn.disabled = true;
+                        submitBtn.textContent = 'Adding...';
+                        
+                        const response = await fetch('/add_to_cart', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                user_id: userId,
+                                items: itemsToAdd
+                            })
+                        });
+
+                        if (response.ok) {
+                            showToast(`Added ${itemsToAdd.length} items to cart!`);
+                            await syncCartWithBackend();
+                            card.style.opacity = '0.5';
+                            card.style.pointerEvents = 'none';
+                            submitBtn.textContent = 'Added!';
+                        } else {
+                            throw new Error('Failed to add');
+                        }
+                    } catch (err) {
+                        showToast('Error adding items', 'error');
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Add Selected to Cart';
+                    }
+                } else {
+                    showToast('Please select at least one item', 'error');
+                }
+            };
+
+            card.appendChild(submitBtn);
+            messageDiv.parentNode.insertBefore(card, messageDiv.nextSibling);
+            card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+
+        function renderCheckoutButton(messageDiv) {
+            if (messageDiv._checkoutCard) return;
+
+            const card = document.createElement('div');
+            card.className = 'checkout-card';
+
+            const header = document.createElement('div');
+            header.className = 'checkout-header';
+            header.innerHTML = '<i class="fas fa-shopping-cart"></i> Ready to finish?';
+            card.appendChild(header);
+
+            const subheader = document.createElement('div');
+            subheader.className = 'checkout-subheader';
+            subheader.textContent = 'All your items are ready in the cart.';
+            card.appendChild(subheader);
+
+            const btn = document.createElement('button');
+            btn.className = 'checkout-button';
+            btn.textContent = 'Proceed to Checkout';
+            btn.onclick = () => {
+                window.location.href = '/cart';
+            };
+            card.appendChild(btn);
+
+            messageDiv.parentNode.insertBefore(card, messageDiv.nextSibling);
+            messageDiv._checkoutCard = card;
+            card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
     </script>
     {% block extra_js %}{% endblock %}
 </body>

@@ -666,6 +666,7 @@
     font-weight: 800;
     background: var(--gradient-accent);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 10px;
   }
@@ -804,7 +805,7 @@
       <div class="hero-badge"><i class="fas fa-rocket"></i> AI-Powered Shopping Assistant</div>
       <h1 class="hero-title">Smart Shopping, Simplified</h1>
       <p class="hero-subtitle">
-        Your personal AI shopping assistant that understands your needs, suggests products, and builds your cart—all through natural conversation.
+        Your personal AI shopping assistant that understands your needs, suggests products, and builds your cart with natural conversation.
       </p>
       <div class="hero-cta-group">
         <button class="btn-primary btn-large" onclick="document.getElementById('chatContainer').classList.remove('hidden'); document.getElementById('chatbotCta').classList.add('hidden');">
@@ -834,7 +835,7 @@
             <div class="feature-icon"><i class="fas fa-comments"></i></div>
             <div class="feature-content">
               <h3>Natural Conversation</h3>
-              <p>Type naturally—ask for products, prices, or help planning your shopping</p>
+              <p>Type naturally and ask for products, prices, or help planning your shopping</p>
             </div>
           </div>
 
@@ -1050,8 +1051,8 @@
             <div class="timeline-title">Smart Shopping Intent Recognition</div>
             <div class="timeline-description">
               Implemented intent classification system to distinguish between product search, cart operations, and recipe planning using LLM function calling.
-              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Context loop confusion—LLM repeating outputs</span>
-              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Hardcoded logic to prevent repeated function calls</span>
+              <span class="challenge-badge"><i class="fas fa-exclamation-triangle"></i> Challenge: Context loop confusion which causes LLM to repeat outputs</span>
+              <span class="solution-badge"><i class="fas fa-check-circle"></i> Solution: Hardcoded logic to prevent repeated llm calls. Which led to better performance and fewer tokens.</span>
             </div>
           </div>
         </div>

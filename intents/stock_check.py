@@ -77,7 +77,7 @@ def get_proactive_matches(search_term, inventory_df, threshold=70):
     
     # 9. Layer 4: Fuzzy matching (catches typos)
     fuzzy_results = process.extract(search_term, all_products, limit=5, scorer=fuzz.token_set_ratio)
-    best_matches = [name for name, score in fuzzy_results if score >= threshold]
+    best_matches = [name for name, score, index in fuzzy_results if score >= threshold]
     
     if best_matches:
         return inventory_df[inventory_df['product_name'].isin(best_matches)].to_dict('records')
@@ -501,6 +501,9 @@ def build_category_subcategory_map(inventory_df) -> dict:
 
 def extract_category_from_query(user_message: str) -> str:
     """Extract main category from user's question"""
+    if not user_message:
+        return ""
+        
     user_lower = user_message.lower()
 
     from nltk.stem import PorterStemmer

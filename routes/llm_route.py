@@ -39,6 +39,15 @@ def cart_redirect():
 
 async def process_and_stream(user_message: str, user_id: str):
     # Check if it's a greeting and stream the response immediately
+    REORDER_KEYWORDS = ["reorder my last shopping list"]
+
+    if any(phrase in user_message.lower() for phrase in REORDER_KEYWORDS):
+        
+        reponse = "Sorry, we dont have that feature yet. You can send an image of your last shopping list and I can try to add it to your cart."
+        async for chunk in stream_message(reponse):
+            yield chunk
+        return
+
     greeting_response = is_greeting(user_message)
     if greeting_response and any(phrase in user_message.lower() for phrase in ["show cart", "what's in my cart?", "what is in my cart?", "what do i have in my cart?", "cart summary", "my cart", "show me my cart"]):
             greeting_response = handle_cart(user_id)
@@ -101,6 +110,9 @@ async def process_and_stream(user_message: str, user_id: str):
 
         async for chunk in stream_message(direct_cart_response):
             yield chunk
+
+        # NEW: Checkout button trigger for direct cart path
+        yield f"data: {json.dumps({'show_checkout': True})}\n\n"
 
         state = get_user_state(user_id)
         state["raw_history"].append({"role": "user", "content": user_message})
@@ -203,8 +215,20 @@ async def process_and_stream(user_message: str, user_id: str):
     if parsed.get("added_products"):
         yield f"data: {json.dumps({'added_products': parsed['added_products']})}\n\n"
     
-    # STEP 6.5: Extract and save products from search responses (stock_check OR inventory_check)
+    # NEW: Send recipe suggestions for UI rendering
+    if parsed.get("suggestions") or parsed.get("recommendations"):
+        recipe_options = parsed.get("suggestions") or parsed.get("recommendations")
+        yield f"data: {json.dumps({'suggestions': recipe_options})}\n\n"
+    
+    # STEP 6.5: Contextualize the intent
     actual_intent = get_user_state(user_id).get("last_intent", detected_intent)
+
+    # NEW: Checkout button trigger
+    # Trigger if intent is checkout/view_cart OR if the response text contains a cart total
+    if actual_intent in ["checkout", "view_cart"] or "Total:" in str(parsed.get("message", "")):
+        yield f"data: {json.dumps({'show_checkout': True})}\n\n"
+
+    # STEP 6.6: Extract and save products from search responses (stock_check OR inventory_check)
     if actual_intent in ["stock_check", "inventory_check", "follow_up"]:
         extracted_products = extract_product_names_from_response(parsed.get("message", ""), parsed)
         if actual_intent == "inventory_check" and not extracted_products and parsed.get("products"):
@@ -212,13 +236,21 @@ async def process_and_stream(user_message: str, user_id: str):
              
         if extracted_products:
             save_products(user_id, extracted_products)
+            # Emit product_suggestions for UI rendering (limited to top 30)
+            yield f"data: {json.dumps({'product_suggestions': extracted_products[:30]})}\n\n"
             #print(f"[Extract] Found {len(extracted_products)} products: {[p['product_name'] for p in extracted_products]}")
     
     # Step 7: Save suggestions for context detection
-    suggestions = [
-        r.get("recipe_name", "")
-        for r in (parsed.get("recommendations") or parsed.get("suggestions") or [])
-    ]
+    suggestions = []
+    raw_suggestions = (parsed.get("recommendations") or parsed.get("suggestions") or [])
+    for r in raw_suggestions:
+        if isinstance(r, str):
+            suggestions.append(r)
+        elif isinstance(r, dict):
+            suggestions.append(r.get("recipe_name", ""))
+    
+    # Filter empty strings and duplicates
+    suggestions = [s for s in suggestions if s]
     
     # Format the response for display
     message_text = format_message(parsed)
@@ -240,6 +272,11 @@ async def process_and_stream(user_message: str, user_id: str):
     state["last_response"]     = message_text
     state["last_suggestions"]  = suggestions
     
+    # NEW: Ensure recipe_name is explicitly saved to state if found in entities
+    if hasattr(entities, "recipe_name") and entities.recipe_name:
+        state["last_recipe_name"] = entities.recipe_name
+        print(f"📄 [STATE] Saved recipe_name: {entities.recipe_name}")
+    
     # Step 9: Save to session (cart, products, recipes)
     if parsed.get("added_products"):
         update_model = CartUpdate(user_id=user_id, items=parsed["added_products"])
@@ -252,7 +289,26 @@ async def process_and_stream(user_message: str, user_id: str):
     if parsed.get("products"):
         save_products(user_id, parsed["products"])
     if parsed.get("ingredients") or parsed.get("steps"):
+        print(f"📄 SAVING RECIPE FOR {user_id}: {parsed.get('recipe_name', 'Unknown')}")
         save_recipe(user_id, parsed)
+        # ╔════════════════════════════════════════════════════════════╗
+        # ║  SYNC: Ingredients to state for next-turn add_to_cart      ║
+        # ╚════════════════════════════════════════════════════════════╝
+        if parsed.get("ingredients"):
+            ing_list = []
+            for ing in parsed["ingredients"]:
+                if isinstance(ing, dict):
+                    name = ing.get("name", "")
+                    amt = ing.get("amount", "")
+                    if name:
+                        ing_list.append(f"{name} ({amt})" if amt else name)
+                elif isinstance(ing, str):
+                    ing_list.append(ing)
+            
+            if ing_list:
+                state["last_recipe_ingredients"] = " | ".join(ing_list)
+                state["last_recipe_name"] = parsed.get("recipe_name") or state.get("last_recipe_name")
+                print(f"📌 SYNCED {len(ing_list)} ingredients to state: {state['last_recipe_ingredients'][:100]}...")
     if parsed.get("suggestions"):
         save_recipe(user_id, {"type": "suggestions", "data": parsed["suggestions"]})
     if parsed.get("recommendations"):

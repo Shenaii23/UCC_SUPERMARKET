@@ -122,18 +122,22 @@ def format_message(parsed: dict) -> str:
         lines       = [message, ""]
 
         for s in suggestions:
-            name    = s.get("recipe_name", "")
-            cost    = s.get("estimated_cost", "")
-            score   = s.get("match_score", "")
-            serves  = s.get("servings", "")
+            if isinstance(s, str):
+                name = s
+                detail = ""
+            else:
+                name    = s.get("recipe_name", "")
+                cost    = s.get("estimated_cost", "")
+                score   = s.get("match_score", "")
+                serves  = s.get("servings", "")
 
-            detail = ""
-            if cost:
-                detail += f"Est. cost: ${cost}"
-            if score:
-                detail += f"  Match: {score}%"
-            if serves:
-                detail += f"  Serves: {serves}"
+                detail = ""
+                if cost:
+                    detail += f"Est. cost: ${cost}"
+                if score:
+                    detail += f"  Match: {score}%"
+                if serves:
+                    detail += f"  Serves: {serves}"
 
             lines.append(f"  • {name}" + (f" — {detail}" if detail else ""))
 

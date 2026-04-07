@@ -418,16 +418,3 @@ def extract_ingredients(ingredients_str: str) -> List[Dict[str, str]]:
         })
     
     return ingredients
-
-
-# A helper to check if the user s selecting a recipt or not
-def is_recipe_selection(text, suggestions):
-    text = text.lower()
-
-    ordinals = ["first", "second", "third", "1st", "2nd", "3rd", "one", "two", "three"]
-    if any(word in text for word in ordinals):
-        return True
-    # Check if any suggestion name is mentioned (basic check)
-    if any(s.lower() in text for s in suggestions):
-        return True
-    return False

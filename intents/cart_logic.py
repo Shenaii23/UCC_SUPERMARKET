@@ -130,6 +130,7 @@ def clear_cart(user_id: str):
 
 # Get cart items
 def get_cart_items(user_id: str):
+    print(f"Getting cart items for user_id: {user_id}")
     return carts.get(user_id, [])
 
 

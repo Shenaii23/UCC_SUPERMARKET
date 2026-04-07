@@ -1,21 +1,13 @@
-# services/llm_logic.py
 import json
-
-import json
+import logging
+from typing import List, Dict, Any, Optional, Union, Tuple
 
 from models.llm_classes import Entity
-
-# intent files
 from intents.check_recipe_availability import get_recipe_data
 from services.context_handler import update_user_state, get_user_state
 from intents.stock_check import (get_proactive_matches, extract_category_from_query)
 from datasets.data import inventory_df
-from typing import List, Dict
-
-
-from typing import Tuple, Optional, List, Dict
 from rapidfuzz import fuzz
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +41,7 @@ async def prepare_stock_response(entities: Entity, user_message: str):
     category = extract_category_from_query(category)
     
     # Search inventory
-    results = get_proactive_matches(product_to_find, inventory_df, threshold=65)
+    results = get_proactive_matches(product_to_find, inventory_df, threshold=75)
     
     # ========== CASE 1: PRODUCTS FOUND ==========
     if results:
@@ -195,9 +187,6 @@ async def generate_fallback_prompt(product_name: str, user_message: str = "") ->
     1. Empathetic message
     2. Suggestions for similar products (if available)
     3. Help text (spelling, search tips)
-    
-    Returns:
-        str: User-friendly message
     """
     
     # Try to find similar products for suggestions
@@ -211,30 +200,22 @@ async def generate_fallback_prompt(product_name: str, user_message: str = "") ->
     
     Unfortunately, we don't currently have "{product_name}" in stock.
     
-    Here are some similar products we do have:
+    Here are some potential similar products from our inventory:
     {format_similar_products(similar_products)}
     
     YOUR TASK:
-    1. Acknowledge that we don't have the product they searched for
-    2. Suggest the similar products we found (if any)
-    3. Offer helpful alternatives (e.g., "We have fresh apples, apple juice, or apple sauce")
-    4. Give them suggestions on what to try next
-    5. Be friendly and helpful, not apologetic
-    6. Use plain text formatting only
+    1. Acknowledge that we don't have the product they searched for.
+    2. USE COMMON SENSE: Look at the suggested products above. If they are logically unrelated to the user's intent (e.g., suggesting 'Cake' for an 'iPhone Charger'), DO NOT suggest or mention them. 
+    3. If the similar products DO make sense (e.g., suggesting 'Whole Milk' for 'Skim Milk'), suggest them clearly.
+    4. Offer helpful alternatives or suggest searching for broad grocery categories instead.
+    5. Be friendly and helpful, not robotic.
     
-    EXAMPLES:
+    RULES:
+    - If the suggestions are nonsensical, just say: "We don't currently have that in stock, and I couldn't find a close alternative in our inventory."
+    - Do NOT mention match percentages to the user.
+    - Format response as JSON only.
     
-    User searched: "xyz123"
-    → "We don't currently have xyz123 in stock. Did you mean apple juice? 
-         We have several options like Fresh Apple, Apple Juice, or Apple Sauce. 
-         Would you like to search for any of these?"
-    
-    User searched: "rare ingredient"
-    → "We don't have rare ingredient in stock right now. However, we have similar products 
-         like Ingredient Option 1, Ingredient Option 2, or Ingredient Option 3. 
-         Feel free to try searching for one of these, or let me know what else you need!"
-    
-    OUTPUT (JSON only):
+    OUTPUT:
     {{
         "message": "Your helpful fallback message here"
     }}
@@ -276,49 +257,45 @@ def get_default_fallback_message(product_name: str) -> str:
 def find_similar_products(
     search_term: str,
     max_results: int = 3,
-    threshold: int = 60
+    threshold: int = 80
 ) -> List[Dict]:
     """
     Find products similar to the search term for fallback suggestions.
-    
-    Uses fuzzy matching to find related products.
-    
-    Args:
-        search_term: Product to search for
-        max_results: Max similar products to return
-        threshold: Minimum fuzzy match score (0-100)
-    
-    Returns:
-        List of similar products with match scores
+    Uses RapidFuzz for high-performance similarity scoring.
     """
+    from rapidfuzz import process, fuzz
     
-    search_lower = search_term.lower()
+    search_lower = search_term.lower().strip()
+    all_products = inventory_df["product_name"].tolist()
+    
+    # Use RapidFuzz to get top matches
+    # WRatio is good for general similarity including substrings and word order
+    raw_results = process.extract(
+        search_lower, 
+        all_products, 
+        limit=max_results * 2,  # Get a few extra to filter exact matches
+        scorer=fuzz.WRatio
+    )
+    
     similar = []
-    
-    for _, row in inventory_df.iterrows():
-        product_name = row.get("product_name", "").lower()
-        
-        # Skip exact match (we already know this wasn't found)
-        if product_name == search_lower:
+    for product_name, score, index in raw_results:
+        # Ignore exact matches (handled by main flow) and ignore low scores
+        if product_name.lower() == search_lower or score < threshold:
             continue
+            
+        # Get full product data
+        row = inventory_df.iloc[index]
+        similar.append({
+            "product_name": product_name,
+            "match_score": round(score, 1),
+            "quantity": row.get("quantity", 0),
+            "price": row.get("price", 0)
+        })
         
-        # Calculate similarity score
-        fuzzy_score = fuzz.ratio(search_lower, product_name)
-        partial_score = fuzz.partial_ratio(search_lower, product_name)
-        combined_score = (fuzzy_score * 0.6) + (partial_score * 0.4)
-        
-        # Include if above threshold
-        if combined_score >= threshold:
-            similar.append({
-                "product_name": row.get("product_name"),
-                "match_score": round(combined_score, 1),
-                "quantity": row.get("quantity", 0),
-                "price": row.get("price", 0)
-            })
-    
-    # Sort by match score and return top N
-    similar.sort(key=lambda x: x["match_score"], reverse=True)
-    return similar[:max_results]
+        if len(similar) >= max_results:
+            break
+            
+    return similar
 
 
 # ========== HELPER: Format similar products for prompt ==========
@@ -357,6 +334,10 @@ def format_product_message(products: Union[Dict, List[Dict]]) -> str:
         return f"We have {p.get('product_name')} in stock (${p.get('price')}). Would you like to add it to your cart?"
     
     # Handle multiple products
+    if len(products) > 3:
+        # Since we now have a beautiful checkbox UI, we don't need to list everything in text.
+        return f"I found **{len(products)}** options for you! You can select the ones you'd like to add to your cart from the list below. 👇"
+
     product_list = []
     for p in products:
         product_list.append(f"• {p.get('product_name')} (Quantity: {p.get('quantity')}, Price: ${p.get('price')})")
@@ -427,6 +408,19 @@ async def prepare_cart_response(entities: Entity, user_message: str, user_id: st
         product_context += "RECENT SEARCH RESULTS:\n"
         for p in session_products:
             product_context += f"- {p['product_name']} (${p['price']})\n"
+
+    from services.context_handler import get_user_state
+    state = get_user_state(user_id)
+    last_recipe_ingredients = state.get("last_recipe_ingredients")
+    last_recipe_name = state.get("last_recipe_name")
+    
+    recipe_context = ""
+    if last_recipe_ingredients:
+        recipe_context = f"\nLAST SHOWN RECIPE ({last_recipe_name or 'Current Recipe'}):\n"
+        # Format ingredients for the prompt context
+        items = last_recipe_ingredients.split('|')
+        for item in items:
+            recipe_context += f"- {item.strip()}\n"
             
     if resolved_products:
         product_context += f"\nSYSTEM HAS RESOLVED USER'S REQUEST TO EXACTLY THESE PRODUCT(S):\n"
@@ -448,15 +442,18 @@ async def prepare_cart_response(entities: Entity, user_message: str, user_id: st
     
     {product_context}
     
+    {recipe_context}
+    
     {cart_context}
     
     TASK:
     1. Check if the SYSTEM HAS RESOLVED the product. If yes, you MUST USE the resolved product(s) exactly. Do NOT ask for clarification. Proceed automatically.
-    2. If no resolved products are provided, identify which product(s) the user wants from the "RECENT SEARCH RESULTS" based on their message.
-    3. If they clearly said "all" or "both", add all from the recent search.
-    4. If the product is entirely missing from context but is a specific request, you can add it if confident or ask for clarification.
-    5. Always return JSON.
-    6. Ensure the "message" is friendly and confirms what was added, without asking follow-up questions about the item just added.
+    2. If no resolved products are provided and the user says "them", "those", "all of them", or "the ingredients", prioritize items from the "LAST SHOWN RECIPE" if available.
+    3. Identify which product(s) the user wants from the "RECENT SEARCH RESULTS" or "LAST SHOWN RECIPE" based on their message.
+    4. If they clearly said "all" or "both", add all from the relevant context (either the recent search results or the recipe ingredients).
+    5. If the product is entirely missing from context but is a specific request, you can add it if confident or ask for clarification.
+    6. Always return JSON.
+    7. Ensure the "message" is friendly and confirms what was added, without asking follow-up questions about the item just added.
     
     OUTPUT FORMAT (JSON only):
     {{
@@ -581,99 +578,74 @@ async def prepare_check_recipe_availability_response(entities: Entity, user_mess
         "action_ready": false
     }}
     """.format(user_message=user_message, context=context)
- 
 
 
-async def prepare_budget_recipe_response(entities, user_message: str) -> str:
+async def prepare_budget_recipe_response(entities, user_message: str, suggestions_result: dict = None) -> str:
     """
-    Ask context questions before recommending recipes.
-    Understand: cooking style, cuisine preference, meal type, dietary restrictions, etc.
+    Ask context questions or recommend recipes based on budget.
     """
-    from intents.budget_recipe_suggestion import budget_recipe_suggestion
-    
     budget = entities.budget
     
     # Check if user provided any context clues
-    cuisine_keywords = ["italian", "jamaican", "asian", "mexican", "indian", "caribbean", "american", "chinese", "spanish"]
-    meal_keywords = ["breakfast", "lunch", "dinner", "snack", "appetizer", "dessert", "main", "side"]
-    diet_keywords = ["vegan", "vegetarian", "gluten", "healthy", "quick", "easy", "simple", "light"]
+    view_words = user_message.lower().split()
+    context_words = {"italian", "jamaican", "asian", "mexican", "indian", "caribbean", "american", "chinese", "spanish",
+                    "breakfast", "lunch", "dinner", "snack", "appetizer", "dessert", "main", "side",
+                    "vegan", "vegetarian", "healthy", "quick", "easy", "simple", "light"}
     
-    has_cuisine = any(keyword in user_message.lower() for keyword in cuisine_keywords)
-    has_meal = any(keyword in user_message.lower() for keyword in meal_keywords)
-    has_diet = any(keyword in user_message.lower() for keyword in diet_keywords)
+    has_context = any(word in context_words for word in view_words)
     
     # If no context provided, ask first
-    if not (has_cuisine or has_meal or has_diet):
-        system_prompt = f"""
+    if not has_context:
+        return f"""
         You are a helpful, friendly grocery store assistant.
         User message: "{user_message}"
         User budget: ${budget}
         
-        CONTEXT: The user has a budget and wants recipe ideas, but hasn't specified their preferences yet.
+        CONTEXT: The user has a budget but hasn't specified what kind of meal they want.
         
         YOUR TASK: Ask clarifying questions to understand what they want to cook!
-        
-        Ask about:
-        1. What meal (breakfast, lunch, dinner, snack, or something special)
-        2. Any cuisine they prefer (Jamaican, Italian, quick & easy, comfort food, healthy, etc.)
-        3. Who they're cooking for (just themselves, family, guests)
-        4. Any dietary preferences or restrictions
-        
-        BE CONVERSATIONAL: Don't ask as a list. Make it sound natural and friendly!
-        
-        Example: "Perfect! With $2000 you can make something really tasty! Before I suggest recipes, tell me - what kind of meal are you thinking? Like a quick weeknight dinner, something fancy for guests, or maybe breakfast? And do you have any preferences - are you in the mood for something light and healthy, or more comfort food?"
+        Ask about meal type (dinner/lunch), cuisine, or dietary needs.
         
         OUTPUT (JSON only):
         {{
-            "message": "Your conversational question about their preferences",
+            "message": "Your conversational question here",
             "action_ready": false
         }}
         """
-        return system_prompt
     
-    # If we have context, get recommendations
-    result = budget_recipe_suggestion(entities)
+    # If we already have the result, use it. Otherwise, fetch it.
+    if suggestions_result is None:
+        from intents.budget_recipe_suggestion import budget_recipe_suggestion
+        suggestions_result = budget_recipe_suggestion(entities)
     
-    if result.get("error") or not result["suggestions"]:
-        context = f"No recipes found within ${budget} budget."
+    if suggestions_result.get("error") or not suggestions_result.get("suggestions"):
+        context = f"No recipes found within JMD ${budget} budget."
     else:
         lines = []
-        for r in result["suggestions"][:5]:
-            missing = ""
-            if r.get("missing_ingredients"):
-                missing_list = r["missing_ingredients"][:2]
-                missing = f" (just need: {', '.join(missing_list)})"
+        for r in suggestions_result["suggestions"][:5]:
+            missing = f" (just need: {', '.join(r['missing_ingredients'][:2])})" if r.get("missing_ingredients") else ""
             lines.append(f"• {r['recipe_name']} — ${r['estimated_cost']} | Serves {r['servings']}{missing}")
         context = "\n".join(lines)
     
-    system_prompt = f"""
+    return f"""
     You are a friendly, enthusiastic grocery store assistant.
     User budget: ${budget}
-    User said: "{user_message}"
+    User suggested context: "{user_message}"
     
-    Recipe suggestions within their budget:
+    Recipes found within budget:
     {context}
     
-    INSTRUCTIONS:
-    - Be warm and conversational (not robotic)
-    - Talk ABOUT the recipes, don't just list them
-    - Pick 2-3 favorites and describe why they're great
-    - Mention they're within budget
-    - If they're missing ingredients, frame positively: "You'll just need to pick up X"
-    - Ask which one sounds good or if they want more options
-    - NO BULLET POINTS - write naturally!
+    TASK:
+    - Write a short, warm intro welcoming them to these budget choices.
+    - Mention 1 or 2 specific highlights from the list.
+    - Confirm they are all under ${budget}.
+    - Ask which one sounds good to them.
     
     OUTPUT (JSON only):
     {{
-        "message": "Conversational response. Example: 'Great choices within your budget! The Shepherd's Pie is perfect if you're feeding a family - hearty, delicious, and only costs $270. If you want something quicker, the Fried Plantain is amazing and super affordable at $320. Both are crowd-pleasers! Which sounds better to you, or should I suggest something else?'",
-        "suggestions": [
-            {{"recipe_name": "name", "estimated_cost": 0.00, "servings": 4}}
-        ],
-        "action_ready": false
+        "message": "Your conversational response here"
     }}
     """
-    
-    return system_prompt 
 
  
 async def prepare_recommend_recipe_response(entities: Entity, user_message: str, recommendations: dict = None) -> str:
@@ -789,6 +761,32 @@ OUTPUT FORMAT (JSON only, no other text):
     "action_ready": false
 }}
 """.format(user_message=user_message, context=context)
+    
+    
+async def prepare_recipe_selection_response(user_message: str, options: list) -> str:
+    """
+    Prompt the LLM to present multiple recipe options for the user to select.
+    """
+    return """
+    You are a helpful grocery store assistant.
+    The user asked for a recipe, but we found multiple matches in our database.
+    
+    User message: "{user_message}"
+    Available Options: {options}
+    
+    TASK:
+    1. Let the user know we have a few different versions of that recipe.
+    2. List the available options naturally and conversationally.
+    3. Ask which one they'd like to see the full details for.
+    4. You can also mention it's helpful for you to know so you can get the right ingredients ready.
+    5. Be warm and helpful.
+    
+    OUTPUT FORMAT (JSON only):
+    {{
+        "message": "Friendly conversational listing of recipes and selection question",
+        "action_ready": false
+    }}
+    """.format(user_message=user_message, options=", ".join(options))
 
 
 async def prepare_aisle_location_response(entities, user_message: str) -> str:
@@ -856,7 +854,7 @@ async def prepare_add_inventory_to_cart_response(product_names: List[str], user_
     
     product_str = ", ".join(product_names) if len(product_names) <= 3 else f"{', '.join(product_names[:3])}, and more"
     
-    return f"""
+    prompt = f"""
     You are a helpful UCC Supermarket assistant.
     User wants to add these items to cart: {product_str}
     User message: "{user_message}"
@@ -874,7 +872,7 @@ async def prepare_add_inventory_to_cart_response(product_names: List[str], user_
         "action_ready": true
     }}
     """
-    return inventory_prompt
+    return prompt
 
 
 async def prepare_inventory_selection_response(user_message: str, options: list):
