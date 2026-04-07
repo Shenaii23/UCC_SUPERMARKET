@@ -1378,6 +1378,7 @@ async def intent_detection(llm_data: str, user_message: str, user_id: str, chat_
                             return get_express_recipe_json(match.iloc[0], state)
                     except Exception as e:
                         #print(f"[FOLLOW_UP] Express path failed, falling back to LLM: {e}")
+                        pass
 
                     # FALLBACK: If not in DB or error, use existing LLM chain
                     state["selected_recipe"] = selected_recipe
